@@ -31,7 +31,7 @@ def irm_min_max_preprocess(image, low_perc=1, high_perc=99):
     return image
 
 
-def extract_middle_slices(nifti_files, num_slices=80, target_shape=(256, 256)):
+def extract_middle_slices(nifti_files, num_slices=100, target_shape=(256, 256)):
     all_slices = []
 
     for nifti_file in nifti_files:
@@ -65,16 +65,18 @@ def save_as_numpy_array(data, save_path):
 
 
 if __name__ == "__main__":
-    # Path to directory containing NIfTI files
-    nifti_directory = "nifti_files_dir_path"
-    nifti_files = [os.path.join(nifti_directory, f) for f in os.listdir(nifti_directory) if f.endswith('.nii.gz')]
-    nifti_files = sorted(nifti_files)
+    modalities = ['t1','t2','flair','t1ce']
+    for modality in modalities:
+        # Path to directory containing NIfTI files
+        nifti_directory = f"test_img/{modality}"
+        nifti_files = [os.path.join(nifti_directory, f) for f in os.listdir(nifti_directory) if f.endswith('.nii.gz')]
+        nifti_files = sorted(nifti_files)
 
-    # Extract middle slices and concatenate
-    middle_slices = extract_middle_slices(nifti_files)
+        # Extract middle slices and concatenate
+        middle_slices = extract_middle_slices(nifti_files)
 
-    # Save as Numpy array
-    save_path =r"save_dir_path\contrast.npy"
-    save_as_numpy_array(middle_slices, save_path)
+        # Save as Numpy array
+        save_path = os.path.join(f"save_dir_path/{modality}", "contrast.npy")
+        save_as_numpy_array(middle_slices, save_path)
 
     print("Middle slices saved as Numpy array.")

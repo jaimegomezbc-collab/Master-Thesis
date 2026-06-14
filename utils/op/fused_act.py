@@ -23,6 +23,9 @@ fused = load(
         os.path.join(module_path, "fused_bias_act.cpp"),
         os.path.join(module_path, "fused_bias_act_kernel.cu"),
     ],
+    verbose=True,
+    extra_cflags=["/Zc:preprocessor"],
+    extra_cuda_cflags=["-Xcompiler=/Zc:preprocessor"],
 )
 
 

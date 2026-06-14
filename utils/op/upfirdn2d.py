@@ -21,6 +21,9 @@ upfirdn2d_op = load(
         os.path.join(module_path, "upfirdn2d.cpp"),
         os.path.join(module_path, "upfirdn2d_kernel.cu"),
     ],
+    verbose=True,
+    extra_cflags=["/Zc:preprocessor"],
+    extra_cuda_cflags=["-Xcompiler=/Zc:preprocessor"],
 )
 
 
