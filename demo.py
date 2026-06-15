@@ -305,7 +305,7 @@ if __name__ == "__main__":
         if arr.dtype != np.uint8:
             arr = np.clip(arr, 0, 1)
             arr = (arr * 255).astype(np.uint8)
-        img = Image.fromarray(arr[89, 0:256, 0:256])
+        img = Image.fromarray(arr[79, 0:256, 0:256])
         if modality == 't1ce':
             real_data = torchvision.transforms.ToTensor()(img).unsqueeze(0).to(device)   # shape: [C, H, W]
         elif modality == 't1':
@@ -326,6 +326,12 @@ if __name__ == "__main__":
     # Squeeze the tensor to remove the batch and channel dimensions for visualization
     sample_inputs = sample_inputs.squeeze(0).squeeze(0)  # Shape: (256, 256, 5)
 
+    # Plot the concatenated image
+    plt.figure(figsize=(10, 10))
+    plt.imshow(sample_inputs.cpu().numpy(), cmap='gray')  # Display in grayscale
+    plt.axis('off')  # Hide axes
+    plt.show()
+
     T = get_time_schedule(args, device)
     pos_coeff = Posterior_Coefficients(args, device)
 
@@ -335,7 +341,9 @@ if __name__ == "__main__":
     # Generate synthetic samples
     fake_sample = sample_from_model(pos_coeff, gen_diffusive_1, x1, gen_diffusive_2, x2, x3,
                                     args.num_timesteps, x1_t, T, args)
+    fake_sample_copy = fake_sample.clone()  # Create a copy of the generated sample for further processing
 
+    
     # Normalize and save
     to_range_0_1 = lambda x: (x + 1.) / 2.
     fake_sample = to_range_0_1(fake_sample)
@@ -343,14 +351,22 @@ if __name__ == "__main__":
 
     fake_sample = fake_sample*255.0
     fake_sample = fake_sample.squeeze(0).squeeze(0)  # Shape: (256, 256, 5)
-
-
-    # Plot the concatenated image
-    plt.figure(figsize=(3, 3))
-    plt.imshow(fake_sample.cpu().numpy(), cmap='gray')  # Display in grayscale
-    plt.axis('off')  # Hide axes
     
     # Plot the concatenated image
+    plt.figure(figsize=(10, 10))
+    plt.imshow(fake_sample.cpu().numpy(), cmap='gray')  # Display in grayscale
+    plt.axis('off')  # Hide axes
+    plt.savefig("Generated Image.png", bbox_inches="tight", pad_inches=0)
+
+
+    real_vis_np = real_data.cpu().numpy().ravel()
+    fake_vis_np = fake_sample_copy.cpu().numpy().ravel()
+    plt.figure(figsize=(10, 5))
+    plt.hist(real_vis_np, bins=100, alpha=0.5, label="real")
+    plt.legend()
+    plt.figure(figsize=(10, 5))
+    plt.hist(fake_vis_np, bins=100, alpha=0.5, label="fake")
+    plt.legend()
     plt.figure(figsize=(10, 10))
     plt.imshow(sample_inputs.cpu().numpy(), cmap='gray')  # Display in grayscale
     plt.axis('off')  # Hide axes
