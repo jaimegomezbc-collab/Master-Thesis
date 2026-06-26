@@ -1,7 +1,7 @@
 import os
-os.environ["TORCH_EXTENSIONS_DIR"] = r"C:\Users\jaime\torch_extensions"
-os.environ["CUDA_HOME"] = r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.3"
-os.environ["PATH"] = r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.3\bin;" + os.environ["PATH"]
+#os.environ["TORCH_EXTENSIONS_DIR"] = r"C:/Users/jaime/torch_extensions"
+#os.environ["CUDA_HOME"] = r"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.3"
+#os.environ["PATH"] = r"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.3/bin;" + os.environ["PATH"]
 from backbones.ncsnpp_generator_adagn_feat import NCSNpp
 from backbones.ncsnpp_generator_adagn_feat import NCSNpp_adaptive
 import numpy as np
@@ -278,8 +278,8 @@ def generate_cet1(image_name, image_dir, output_dir):
     gen_diffusive_2 = NCSNpp_adaptive(args).to(device)
 
     # Load checkpoints
-    load_checkpoint(r'MU-Diff_Model_Weights\brats\t1ce\gen_diffusive_1.pth', gen_diffusive_1, 'gen_diffusive_1', device=device)
-    load_checkpoint(r'MU-Diff_Model_Weights\brats\t1ce\gen_diffusive_2.pth', gen_diffusive_2, 'gen_diffusive_2', device=device)
+    load_checkpoint(r'MU-Diff_Model_Weights/brats/t1ce/gen_diffusive_1.pth', gen_diffusive_1, 'gen_diffusive_1', device=device)
+    load_checkpoint(r'MU-Diff_Model_Weights/brats/t1ce/gen_diffusive_2.pth', gen_diffusive_2, 'gen_diffusive_2', device=device)
 
     # Load the image from the specified path
     x1_path = os.path.join(os.path.join(image_dir,'flair'), image_name)
