@@ -43,8 +43,8 @@ def load_image(image_path, size=(256, 256)):
 
 if __name__ == "__main__":
     # Example usage
-    image_paths = [r"C:\Users\jaime\OneDrive\Downloads\archive (1)\MU-Diff images\train\t1ce/volume_100_slice_0.jpg", r"C:\Users\jaime\OneDrive\Downloads\archive (1)\MU-Diff images\train\t1ce/volume_100_slice_92.jpg", r"C:\Users\jaime\OneDrive\Downloads\archive (1)\MU-Diff images\train\t1ce/volume_95_slice_89.jpg"]  # Replace with your image paths
-    output_dir = r"C:\Users\jaime\OneDrive\Downloads\archive (1)\Code_test"  # Replace with your desired output directory
+    image_paths = [r"C:/Users/jaime/OneDrive/Downloads/archive (1)/MU-Diff images/train/t1ce/volume_100_slice_0.jpg", r"C:/Users/jaime/OneDrive/Downloads/archive (1)/MU-Diff images/train/t1ce/volume_100_slice_92.jpg", r"C:/Users/jaime/OneDrive/Downloads/archive (1)/MU-Diff images/train/t1ce/volume_95_slice_89.jpg"]  # Replace with your image paths
+    output_dir = r"C:/Users/jaime/OneDrive/Downloads/archive (1)/Code_test"  # Replace with your desired output directory
     os.makedirs(output_dir, exist_ok=True)
     for image_path in image_paths:
         create_classifier_dataset(image_path, output_dir)
