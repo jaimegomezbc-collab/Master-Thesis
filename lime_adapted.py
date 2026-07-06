@@ -1,18 +1,63 @@
-import os
-os.environ["TORCH_EXTENSIONS_DIR"] = r"C:/Users/jaime/torch_extensions"
-os.environ["CUDA_HOME"] = r"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.3"
-os.environ["PATH"] = r"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.3/bin;" + os.environ["PATH"]
+import matplotlib.pyplot as plt
+from PIL import Image
+import torch.nn as nn
+import numpy as np
+import os, json
 from backbones.ncsnpp_generator_adagn_feat import NCSNpp
 from backbones.ncsnpp_generator_adagn_feat import NCSNpp_adaptive
-import numpy as np
 from PIL import Image
 import matplotlib.pyplot as plt
 import argparse
+
 import torch
-import numpy as np
-from PIL import Image
-import torchvision.transforms
-import matplotlib.pyplot as plt
+from torchvision import models, transforms
+from torch.autograd import Variable
+import torch.nn.functional as F
+
+def get_image(path):
+    with open(os.path.abspath(path), 'rb') as f:
+        with Image.open(f) as img:
+            return img.convert('RGB') 
+        
+def get_input_transform():
+    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                    std=[0.229, 0.224, 0.225])       
+    transf = transforms.Compose([
+        transforms.Resize((256, 256)),
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+        normalize
+    ])    
+
+    return transf
+
+def get_input_tensors(img):
+    transf = get_input_transform()
+    # unsqeeze converts single image to batch of 1
+    return transf(img).unsqueeze(0)
+
+model = #Classifier model
+
+def get_pil_transform(): 
+    transf = transforms.Compose([
+        transforms.Resize((256, 256)),
+        transforms.CenterCrop(224)
+    ])    
+
+    return transf
+
+def get_preprocess_transform():
+    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                    std=[0.229, 0.224, 0.225])     
+    transf = transforms.Compose([
+        transforms.ToTensor(),
+        normalize
+    ])    
+
+    return transf    
+
+pill_transf = get_pil_transform()
+preprocess_transform = get_preprocess_transform()
 
 def load_checkpoint(checkpoint_dir, netG, name_of_network, device='cuda:0'):
     checkpoint_file = checkpoint_dir.format(name_of_network)
@@ -204,15 +249,8 @@ def load_image(image_path, size=(256, 256)):
     
     return img_tensor
 
-def generate_cet1(image_name, image_dir, output_dir):
-    """
-    Generate a CET1 image from the given image name and directory, and save it to the output directory.
-
-    Args:
-        image_name (str): Name of the input image file.
-        image_dir (str): Directory where the input image is located.
-        output_dir (str): Directory where the generated CET1 image will be saved.
-    """
+def generate_synthetic_image(flair, t2, t1):
+    # Assuming flair, t2, t1 are PIL images
     device='cuda:0'
     args = argparse.Namespace(
         # General setup
@@ -281,18 +319,11 @@ def generate_cet1(image_name, image_dir, output_dir):
     load_checkpoint(r'MU-Diff_Model_Weights/brats/t1ce/gen_diffusive_1.pth', gen_diffusive_1, 'gen_diffusive_1', device=device)
     load_checkpoint(r'MU-Diff_Model_Weights/brats/t1ce/gen_diffusive_2.pth', gen_diffusive_2, 'gen_diffusive_2', device=device)
 
-    # Load the image from the specified path
-    x1_path = os.path.join(os.path.join(image_dir,'flair'), image_name)
-    x2_path = os.path.join(os.path.join(image_dir,'t2'), image_name)
-    x3_path = os.path.join(os.path.join(image_dir,'t1'), image_name)
 
     # Load images
-    x1 = load_image(x1_path).cuda()
-    x2 = load_image(x2_path).cuda()
-    x3 = load_image(x3_path).cuda()
-    x1=torch.rot90(x1, k=-1, dims=(2, 3))
-    x2=torch.rot90(x2, k=-1, dims=(2, 3))
-    x3=torch.rot90(x3, k=-1, dims=(2, 3))
+    x1=torch.rot90(flair, k=-1, dims=(2, 3))
+    x2=torch.rot90(t2, k=-1, dims=(2, 3))
+    x3=torch.rot90(t1, k=-1, dims=(2, 3))
 
     T = get_time_schedule(args, device)
     pos_coeff = Posterior_Coefficients(args, device)
@@ -309,7 +340,49 @@ def generate_cet1(image_name, image_dir, output_dir):
 
     fake_sample = fake_sample*255.0
     fake_sample = fake_sample.squeeze(0).squeeze(0)  # Shape: (256, 256, 5)
+    
+    return fake_sample.detach().cpu().numpy()
 
-    # Save the processed dataset to the output path
-    output_path = os.path.join(output_dir, image_name)
-    Image.fromarray(fake_sample.detach().cpu().numpy().astype(np.uint8)).save(output_path)
+def batch_predict(images, n_modes=1):
+    synthetic_images = []
+    if n_modes != 1:
+        for i in range(0,images.shape[2],3):
+            synthetic_image = generate_synthetic_image(images[i], images[i+1], images[i+2])
+            synthetic_images.append(synthetic_image)
+    batch = torch.stack(tuple(preprocess_transform(i) for i in synthetic_images), dim=0)
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
+    batch = batch.to(device)
+    
+    logits = model(batch)
+    probs = F.softmax(logits, dim=1)
+    return probs.detach().cpu().numpy()
+
+from lime import lime_image
+img = np.array([flair_array, t2_array, t1_array])  # Assuming these are your input images
+explainer = lime_image.LimeImageExplainer()
+explanation = explainer.explain_instance(np.array(pill_transf(img)), 
+                                         batch_predict, # classification function
+                                         top_labels=5, 
+                                         hide_color=0, 
+                                         num_samples=1000) # number of images that will be sent to classification function
+from skimage.segmentation import mark_boundaries
+temp, mask = explanation.get_image_and_mask(explanation.top_labels[0], positive_only=True, num_features=5, hide_rest=False)
+plt.figure(figsize=(10, 10))
+plt.subplot(131)
+img_boundry1 = mark_boundaries(temp[:,:,0]/255.0, mask[:,:,0])
+plt.imshow(img_boundry1)  # Display in grayscale
+plt.title('FLAIR')  # Add title
+plt.axis('off')
+plt.subplot(132)
+img_boundry2 = mark_boundaries(temp[:,:,1]/255.0, mask[:,:,1])
+plt.imshow(img_boundry2)
+plt.title('T2')  # Add title
+plt.axis('off')
+plt.subplot(133)
+img_boundry3 = mark_boundaries(temp[:,:,2]/255.0, mask[:,:,2])
+plt.imshow(img_boundry3)
+plt.title('T1')  # Add title
+plt.axis('off')
+plt.show()
