@@ -1,7 +1,7 @@
 import os
-os.environ["TORCH_EXTENSIONS_DIR"] = r"C:/Users/jaime/torch_extensions"
-os.environ["CUDA_HOME"] = r"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.3"
-os.environ["PATH"] = r"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.3/bin;" + os.environ["PATH"]
+from pathlib import Path
+os.environ["TORCH_EXTENSIONS_DIR"] = str(Path(os.environ["CONDA_PREFIX"]) / "torch_extensions")
+os.environ["TORCH_CUDA_ARCH_LIST"] = "8.0"
 from backbones.ncsnpp_generator_adagn_feat import NCSNpp
 from backbones.ncsnpp_generator_adagn_feat import NCSNpp_adaptive
 import numpy as np
@@ -313,3 +313,4 @@ def generate_cet1(image_name, image_dir, output_dir):
     # Save the processed dataset to the output path
     output_path = os.path.join(output_dir, image_name)
     Image.fromarray(fake_sample.detach().cpu().numpy().astype(np.uint8)).save(output_path)
+

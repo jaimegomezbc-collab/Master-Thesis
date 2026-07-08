@@ -1,8 +1,7 @@
 import os
-os.environ["TORCH_EXTENSIONS_DIR"] = r"C:\Users\jaime\torch_extensions"
-os.environ["CUDA_HOME"] = r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.3"
-os.environ["PATH"] = r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.3\bin;" + os.environ["PATH"]
-print(os.environ["CUDA_HOME"])
+from pathlib import Path
+os.environ["TORCH_EXTENSIONS_DIR"] = str(Path(os.environ["CONDA_PREFIX"]) / "torch_extensions")
+os.environ["TORCH_CUDA_ARCH_LIST"] = "8.0"
 from backbones.ncsnpp_generator_adagn_feat import NCSNpp
 from backbones.ncsnpp_generator_adagn_feat import NCSNpp_adaptive
 import numpy as np
@@ -14,6 +13,49 @@ import numpy as np
 from PIL import Image
 import torchvision.transforms
 import matplotlib.pyplot as plt
+from matplotlib.widgets import RectangleSelector
+from torch.utils.checkpoint import checkpoint
+
+def select_roi_interactive(image_2d):
+    coords = {}
+
+    fig, ax = plt.subplots(figsize=(6, 6))
+    ax.imshow(image_2d, cmap='gray')
+    ax.set_title("Drag ROI, then close window")
+    ax.axis('off')
+
+    def onselect(eclick, erelease):
+        x1, y1 = int(eclick.xdata), int(eclick.ydata)
+        x2, y2 = int(erelease.xdata), int(erelease.ydata)
+
+        coords['x1'] = min(x1, x2)
+        coords['x2'] = max(x1, x2)
+        coords['y1'] = min(y1, y2)
+        coords['y2'] = max(y1, y2)
+
+        print("Selected ROI:", coords)
+
+    rect_selector = RectangleSelector(
+        ax,
+        onselect,
+        useblit=True,
+        button=[1],
+        minspanx=2,
+        minspany=2,
+        spancoords='pixels',
+        interactive=True
+    )
+
+    plt.show()
+
+    if not coords:
+        raise RuntimeError("No ROI selected.")
+
+    return coords
+
+def modality_score(sal):
+    # sum over spatial dims, optionally also channels
+    return sal.sum(dim=(1, 2, 3), keepdim=True)   # or (2,3) if already [1,1,H,W]
 
 def load_checkpoint(checkpoint_dir, netG, name_of_network, device='cuda:0'):
     checkpoint_file = checkpoint_dir.format(name_of_network)
@@ -159,25 +201,187 @@ def sample_posterior_combine(coefficients, x_0_1, x_0_2, x_t, t):
     return sample_x_pos
 
 
-def sample_from_model(coefficients, generator1, cond1, generator2, cond2, cond3, n_time, x_init, T, opt):
+def sample_from_model(
+    coefficients,
+    generator1,
+    cond1,
+    generator2,
+    cond2,
+    cond3,
+    n_time,
+    x_init,
+    T,
+    opt,
+    track_modality_contrib=False,
+    step_stride=None,
+    roi_mask=None,
+    positive_only=False,
+    return_saliency_maps=False,
+    normalize_saliency_maps=True,
+):
     x = x_init
 
     with torch.no_grad():
-        for i in reversed(range(n_time)):
-            t = torch.full((x.size(0),), i, dtype=torch.int64).to(x.device)
+        unc_accum = torch.zeros_like(x_init)
 
-            t_time = t
-            latent_z = torch.randn(x.size(0), opt.nz, device=x.device)  # .to(x.device)
+    modality_scores = {
+        "flair": 0.0,
+        "t2": 0.0,
+        "t1": 0.0,
+    }
 
-            x_0_1 = generator1(x, cond1, cond2, cond3, t_time, latent_z)
-            x_0_2 = generator2(x, cond1, cond2, cond3, t_time, latent_z, x_0_1[:, [0], :])
+    saliency_maps = None
+    saliency_steps = 0
 
-            x_new = sample_posterior_combine(coefficients, x_0_1[:, [0], :], x_0_2[:, [0], :], x, t)
+    if return_saliency_maps:
+        saliency_maps = {
+            "flair": torch.zeros_like(cond1),
+            "t2": torch.zeros_like(cond2),
+            "t1": torch.zeros_like(cond3),
+        }
 
-            x = x_new.detach()
+    if step_stride is None:
+        step_stride = 1 if track_modality_contrib else None
 
-    return x
+    for i in reversed(range(n_time)):
+        print(i)
+        t = torch.full((x.size(0),), i, dtype=torch.int64, device=x.device)
+        t_time = t
+        latent_z = torch.randn(x.size(0), opt.nz, device=x.device)
 
+        do_attr = track_modality_contrib and (step_stride is not None) and (i % step_stride == 0)
+
+        if do_attr:
+            cond1_step = cond1.detach().clone().requires_grad_(True)
+            cond2_step = cond2.detach().clone().requires_grad_(True)
+            cond3_step = cond3.detach().clone().requires_grad_(True)
+
+            with torch.no_grad():
+                x_0_1 = generator1(x, cond1_step, cond2_step, cond3_step, t_time, latent_z)
+
+            x_0_2 = checkpoint(
+                lambda a, b, c, d, e, f, g: generator2(a, b, c, d, e, f, g),
+                x.detach(),
+                cond1_step,
+                cond2_step,
+                cond3_step,
+                t_time,
+                latent_z.detach(),
+                x_0_1[:, [0], :].detach(),
+                use_reentrant=False,
+            )
+
+            if roi_mask is None:
+                score = x_0_2[:, [0], :].sum()
+            else:
+                score = (x_0_2[:, [0], :] * roi_mask).sum()
+
+            g1, g2, g3 = torch.autograd.grad(
+                outputs=score,
+                inputs=[cond1_step, cond2_step, cond3_step],
+                retain_graph=False,
+                create_graph=False,
+                allow_unused=True,
+            )
+
+            if g1 is None:
+                g1 = torch.zeros_like(cond1_step)
+            if g2 is None:
+                g2 = torch.zeros_like(cond2_step)
+            if g3 is None:
+                g3 = torch.zeros_like(cond3_step)
+
+            if positive_only:
+                g1_map = torch.clamp(g1, min=0)
+                g2_map = torch.clamp(g2, min=0)
+                g3_map = torch.clamp(g3, min=0)
+            else:
+                g1_map = g1.abs()
+                g2_map = g2.abs()
+                g3_map = g3.abs()
+
+            c1 = g1_map.sum().item()
+            c2 = g2_map.sum().item()
+            c3 = g3_map.sum().item()
+
+            modality_scores["flair"] += c1
+            modality_scores["t2"] += c2
+            modality_scores["t1"] += c3
+
+            if return_saliency_maps:
+                saliency_maps["flair"] += g1_map.detach()
+                saliency_maps["t2"] += g2_map.detach()
+                saliency_maps["t1"] += g3_map.detach()
+                saliency_steps += 1
+
+            with torch.no_grad():
+                unc_map_t = torch.abs(x_0_1[:, [0], :] - x_0_2[:, [0], :])
+                unc_accum = unc_accum + unc_map_t
+                x_new = sample_posterior_combine(
+                    coefficients,
+                    x_0_1[:, [0], :].detach(),
+                    x_0_2[:, [0], :].detach(),
+                    x,
+                    t
+                )
+                x = x_new.detach()
+
+            del cond1_step, cond2_step, cond3_step
+            del g1, g2, g3, g1_map, g2_map, g3_map, score
+            del x_0_1, x_0_2, unc_map_t, x_new
+
+        else:
+            with torch.no_grad():
+                x_0_1 = generator1(x, cond1, cond2, cond3, t_time, latent_z)
+                x_0_2 = generator2(x, cond1, cond2, cond3, t_time, latent_z, x_0_1[:, [0], :])
+
+                unc_map_t = torch.abs(x_0_1[:, [0], :] - x_0_2[:, [0], :])
+                unc_accum = unc_accum + unc_map_t
+
+                x_new = sample_posterior_combine(
+                    coefficients,
+                    x_0_1[:, [0], :].detach(),
+                    x_0_2[:, [0], :].detach(),
+                    x,
+                    t
+                )
+                x = x_new.detach()
+
+                del x_0_1, x_0_2, unc_map_t, x_new
+
+        del latent_z, t, t_time
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    unc = unc_accum / n_time
+
+    if track_modality_contrib:
+        total = modality_scores["flair"] + modality_scores["t2"] + modality_scores["t1"] + 1e-8
+        modality_scores_norm = {
+            "flair": modality_scores["flair"] / total,
+            "t2": modality_scores["t2"] / total,
+            "t1": modality_scores["t1"] / total,
+        }
+
+        if return_saliency_maps:
+            if saliency_steps > 0:
+                saliency_maps["flair"] /= saliency_steps
+                saliency_maps["t2"] /= saliency_steps
+                saliency_maps["t1"] /= saliency_steps
+
+            if normalize_saliency_maps:
+                for k in saliency_maps:
+                    sm = saliency_maps[k]
+                    sm_min = sm.min()
+                    sm_max = sm.max()
+                    saliency_maps[k] = (sm - sm_min) / (sm_max - sm_min + 1e-8)
+
+            return x, unc, modality_scores, modality_scores_norm, saliency_maps
+
+        return x, unc, modality_scores, modality_scores_norm
+
+    return x, unc
 
 # Normalize the image using min-max scaling
 def normalize(image):
@@ -281,45 +485,65 @@ if __name__ == "__main__":
         gpu_chose=0,
     )
 
-
     # Example of modifying an argument interactively
     args.num_timesteps = 1000
     args.exp = 'experiment_name'
+    print('Prep 1: Done')
 
     gen_diffusive_1 = NCSNpp(args).to(device)
     gen_diffusive_2 = NCSNpp_adaptive(args).to(device)
+    gen_diffusive_1.eval()
+    gen_diffusive_2.eval()
 
     # Load checkpoints
-    load_checkpoint(r'MU-Diff_Model_Weights\brats\t1ce\gen_diffusive_1.pth', gen_diffusive_1, 'gen_diffusive_1', device=device)
-    load_checkpoint(r'MU-Diff_Model_Weights\brats\t1ce\gen_diffusive_2.pth', gen_diffusive_2, 'gen_diffusive_2', device=device)
+    load_checkpoint(r'MU-Diff_Model_Weights/brats/t1ce/gen_diffusive_1.pth', gen_diffusive_1, 'gen_diffusive_1',
+                    device=device)
+    load_checkpoint(r'MU-Diff_Model_Weights/brats/t1ce/gen_diffusive_2.pth', gen_diffusive_2, 'gen_diffusive_2',
+                    device=device)
 
-    modalities = ['t1','t2','flair','t1ce']
+    print('Prep 2: Done')
+
+    """ modalities = ['t1','t2','flair','t1ce']
     for modality in modalities:
-        arr = np.load(rf"save_dir_path\{modality}\contrast.npy")
+        arr = np.load(rf"save_dir_path/{modality}/contrast.npy")
         # If shape is (1, 1, 256, 256)
         if arr.ndim == 4:
             arr = arr.squeeze()          # -> (256, 256)
-        # If shape is (1, 1, 256)
+       # If shape is (1, 1, 256)
         if arr.ndim == 3:
             arr = arr.squeeze()
-        if arr.dtype != np.uint8:
-            arr = np.clip(arr, 0, 1)
-            arr = (arr * 255).astype(np.uint8)
-        img = Image.fromarray(arr[79, 0:256, 0:256])
+        arr = Image.fromarray(arr[79, 0:256, 0:256])
         if modality == 't1ce':
-            real_data = torchvision.transforms.ToTensor()(img).unsqueeze(0).to(device)   # shape: [C, H, W]
+            real_data = preprocess_image(arr).cuda()  # shape: [C, H, W]
         elif modality == 't1':
-            x3 = torchvision.transforms.ToTensor()(img).unsqueeze(0).to(device)   # shape: [C, H, W]
-        elif modality == 't2': 
-            x2 = torchvision.transforms.ToTensor()(img).unsqueeze(0).to(device)   # shape: [C, H, W]
+            x3 = preprocess_image(arr).cuda()  # shape: [C, H, W]
+        elif modality == 't2':
+            x2 = preprocess_image(arr).cuda()  # shape: [C, H, W]
         elif modality == 'flair':
-            x1 = torchvision.transforms.ToTensor()(img).unsqueeze(0).to(device)   # shape: [C, H, W]da()
+            x1 = preprocess_image(arr).cuda()  # shape: [C, H, W] """
 
+    x1_path = r'demo/sample_data/flair.jpg'
+    x2_path = r'demo/sample_data/t2.jpg'
+    x3_path = r'demo/sample_data/t1.jpg'
+    real_data_path = r'demo/sample_data/t1ce.jpg'
 
-    x1=torch.rot90(x1, k=-1, dims=(2, 3))
-    x2=torch.rot90(x2, k=-1, dims=(2, 3))
-    x3=torch.rot90(x3, k=-1, dims=(2, 3))
-    real_data=torch.rot90(real_data, k=-1, dims=(2, 3))
+    # Load images
+    x1 = load_image(x1_path).cuda()
+    x2 = load_image(x2_path).cuda()
+    x3 = load_image(x3_path).cuda()
+    real_data = load_image(real_data_path).cuda()
+
+    x1 = torch.rot90(x1, k=-1, dims=(2, 3))
+    x2 = torch.rot90(x2, k=-1, dims=(2, 3))
+    x3 = torch.rot90(x3, k=-1, dims=(2, 3))
+    real_data = torch.rot90(real_data, k=-1, dims=(2, 3))
+    real_for_roi = ((x3.squeeze().detach().cpu().numpy() + 1.0) / 2.0) * 255.0
+    roi = select_roi_interactive(real_for_roi)
+
+    roi_mask = torch.zeros_like(real_data)
+    roi_mask[:, :, roi['y1']:roi['y2'], roi['x1']:roi['x2']] = 1.0
+
+    # make inputs differentiable
 
     sample_inputs = torch.cat((x1, x2, x3, real_data), axis=-1)  # Concatenate along the width
 
@@ -337,37 +561,80 @@ if __name__ == "__main__":
 
     # Initialize noisy input
     x1_t = torch.randn_like(real_data)
+    print('Prep 3: Done')
 
-    # Generate synthetic samples
-    fake_sample = sample_from_model(pos_coeff, gen_diffusive_1, x1, gen_diffusive_2, x2, x3,
-                                    args.num_timesteps, x1_t, T, args)
-    fake_sample_copy = fake_sample.clone()  # Create a copy of the generated sample for further processing
+    fake_sample, unc, modality_scores_raw, modality_scores_norm, saliency_maps = sample_from_model(
+        pos_coeff,
+        gen_diffusive_1,
+        x1,
+        gen_diffusive_2,
+        x2,
+        x3,
+        args.num_timesteps,
+        x1_t,
+        T,
+        args,
+        track_modality_contrib=True,
+        step_stride=1,  # 10 sampled timesteps over 1000
+        roi_mask=roi_mask,  # or lesion mask
+        positive_only=False,  # abs gradients
+        return_saliency_maps=True,
+        normalize_saliency_maps=True,
+    )
 
-    
+    print("\nRaw modality scores:")
+    print("FLAIR:", round(modality_scores_raw["flair"],4))
+    print("T2:   ", round(modality_scores_raw["t2"],4))
+    print("T1:   ", round(modality_scores_raw["t1"],4))
+
+    print("\nNormalized modality fractions:")
+    print("FLAIR:", round(modality_scores_norm["flair"],4))
+    print("T2:   ", round(modality_scores_norm["t2"],4))
+    print("T1:   ", round(modality_scores_norm["t1"],4))
+
+    unc = unc - unc.min()
+    unc = unc / (unc.max() + 1e-8)
+
     # Normalize and save
     to_range_0_1 = lambda x: (x + 1.) / 2.
     fake_sample = to_range_0_1(fake_sample)
-    
 
-    fake_sample = fake_sample*255.0
+    fake_sample = fake_sample * 255.0
     fake_sample = fake_sample.squeeze(0).squeeze(0)  # Shape: (256, 256, 5)
-    
+
     # Plot the concatenated image
     plt.figure(figsize=(10, 10))
     plt.imshow(fake_sample.cpu().numpy(), cmap='gray')  # Display in grayscale
     plt.axis('off')  # Hide axes
     plt.savefig("Generated Image.png", bbox_inches="tight", pad_inches=0)
 
-
-    real_vis_np = real_data.cpu().numpy().ravel()
-    fake_vis_np = fake_sample_copy.cpu().numpy().ravel()
-    plt.figure(figsize=(10, 5))
-    plt.hist(real_vis_np, bins=100, alpha=0.5, label="real")
-    plt.legend()
-    plt.figure(figsize=(10, 5))
-    plt.hist(fake_vis_np, bins=100, alpha=0.5, label="fake")
-    plt.legend()
     plt.figure(figsize=(10, 10))
     plt.imshow(sample_inputs.cpu().numpy(), cmap='gray')  # Display in grayscale
     plt.axis('off')  # Hide axes
+    plt.figure(figsize=(8, 8))
+    plt.imshow(fake_sample.cpu().numpy(), cmap='gray')
+    plt.imshow(unc.squeeze(0).squeeze(0).cpu().numpy(), cmap='jet', alpha=0.35)  # overlay
+    plt.axis('off')
+    plt.colorbar(fraction=0.046, pad=0.04, label='Uncertainty')
+    plt.savefig("uncertainty_overlay.png", bbox_inches="tight", pad_inches=0)
+    plt.axis('off')
+
+    fig, axes = plt.subplots(1, 3, figsize=(12, 8))
+    axes[0].imshow(x1.squeeze(0).squeeze(0).cpu().numpy(), cmap='gray')
+    axes[0].imshow(saliency_maps["flair"].squeeze(0).squeeze(0).cpu().numpy(), cmap='hot', alpha=0.45)
+    axes[0].set_title("FLAIR saliency")
+
+    axes[1].imshow(x2.squeeze(0).squeeze(0).cpu().numpy(), cmap='gray')
+    axes[1].imshow(saliency_maps["t2"].squeeze(0).squeeze(0).cpu().numpy(), cmap='hot', alpha=0.45)
+    axes[1].set_title("T2 saliency")
+
+    axes[2].imshow(x3.squeeze(0).squeeze(0).cpu().numpy(), cmap='gray')
+    axes[2].imshow(saliency_maps["t1"].squeeze(0).squeeze(0).cpu().numpy(), cmap='hot', alpha=0.45)
+    axes[2].set_title("T1 saliency")
+
+    for ax in axes.ravel():
+        ax.axis("off")
+
+    plt.tight_layout()
+    plt.savefig("modality_saliency_maps.png", dpi=200, bbox_inches="tight")
     plt.show()
