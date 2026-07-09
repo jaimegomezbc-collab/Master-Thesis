@@ -244,7 +244,6 @@ def sample_from_model(
         step_stride = 1 if track_modality_contrib else None
 
     for i in reversed(range(n_time)):
-        print(i)
         t = torch.full((x.size(0),), i, dtype=torch.int64, device=x.device)
         t_time = t
         latent_z = torch.randn(x.size(0), opt.nz, device=x.device)
@@ -256,8 +255,16 @@ def sample_from_model(
             cond2_step = cond2.detach().clone().requires_grad_(True)
             cond3_step = cond3.detach().clone().requires_grad_(True)
 
-            with torch.no_grad():
-                x_0_1 = generator1(x, cond1_step, cond2_step, cond3_step, t_time, latent_z)
+            x_0_1 = checkpoint(
+                lambda a, b, c, d, e, f: generator1(a, b, c, d, e, f),
+                x.detach(),
+                cond1_step,
+                cond2_step,
+                cond3_step,
+                t_time,
+                latent_z.detach(),
+                use_reentrant=False,
+)
 
             x_0_2 = checkpoint(
                 lambda a, b, c, d, e, f, g: generator2(a, b, c, d, e, f, g),
@@ -267,7 +274,7 @@ def sample_from_model(
                 cond3_step,
                 t_time,
                 latent_z.detach(),
-                x_0_1[:, [0], :].detach(),
+                x_0_1[:, [0], :],
                 use_reentrant=False,
             )
 
