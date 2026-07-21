@@ -128,7 +128,7 @@ class LimeImageExplainer(object):
     def explain_instance(self, image, classifier_fn, labels=(1,),
                          hide_color=None,
                          top_labels=5, num_features=100000, num_samples=1000,
-                         batch_size=10,
+                         batch_size=3,
                          segmentation_fn=None,
                          distance_metric='cosine',
                          model_regressor=None,
@@ -297,7 +297,7 @@ class LimeImageExplainer(object):
                     segments,
                     classifier_fn,
                     num_samples,
-                    batch_size=10,
+                    batch_size=3,
                     progress_bar=True,
                     n_modes=1):
         """Generates images and predictions in the neighborhood of this image.

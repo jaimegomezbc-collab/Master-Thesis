@@ -321,7 +321,6 @@ def generate_synthetic_image(flair, t2, t1):
     flair = torch.from_numpy(flair).unsqueeze(0).unsqueeze(0).cuda()
     t2 = torch.from_numpy(t2).unsqueeze(0).unsqueeze(0).cuda()
     t1 = torch.from_numpy(t1).unsqueeze(0).unsqueeze(0).cuda()
-    print(flair.shape)
 
     # Load images
     x1=torch.rot90(flair, k=-1, dims=(2, 3))
@@ -348,8 +347,10 @@ def generate_synthetic_image(flair, t2, t1):
 
 def batch_predict(images, n_modes=1):
     synthetic_images = []
+    model.eval()
     if n_modes != 1:
         for i in range(images.shape[0]):
+            print(i)
             synthetic_image = generate_synthetic_image(images[i][0], images[i][1], images[i][2])
             synthetic_images.append(synthetic_image)
     batch = torch.stack(tuple(preprocess_transform(i) for i in synthetic_images), dim=0)
@@ -371,7 +372,6 @@ x3_path = r'demo/sample_data/t1.jpg'
 flair = load_image(x1_path)
 t2 = load_image(x2_path)
 t1 = load_image(x3_path)
-print(flair.shape)
 img = np.stack([
     flair.detach().cpu().numpy().squeeze(0).squeeze(0),
     t2.detach().cpu().numpy().squeeze(0).squeeze(0),
