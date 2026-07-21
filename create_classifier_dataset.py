@@ -52,8 +52,7 @@ def worker(job_queue):
         try:
             # Remove the lock if you want true concurrent GPU access.
             # Keep it if you want 2 workers for CPU-side prep but only 1 GPU inference at once.
-            with gpu_lock:
-                create_classifier_dataset(file_path, file_output_path)
+            create_classifier_dataset(file_path, file_output_path)
 
             print(f"Done: {file_path}")
         except Exception as e:
@@ -74,15 +73,9 @@ def create_classifier_dataset(image_path,output_dir):
         #print(f"Image at {image_path} is too small or empty. Skipping.")
         return None
 
-    # Decide whether to keep the ground truth based or the synthetic image
-    if random.random()<0.5:
-        # Keep the ground truth based image
-        image = np.rot90(image, k=-1)
-        Image.fromarray(image).save(os.path.join(output_dir, os.path.basename(image_path)))
-    else:
-        print(f"Generating synthetic image for {image_path}")
-        generate_cet1(os.path.basename(image_path), os.path.dirname(os.path.dirname(image_path)), output_dir)
-    return None
+    # Keep the ground truth based image
+    image = np.rot90(image, k=-1)
+    Image.fromarray(image).save(os.path.join(output_dir, os.path.basename(image_path)))
 
 def load_image(image_path, size=(256, 256)):
     """
@@ -97,11 +90,11 @@ def load_image(image_path, size=(256, 256)):
     else:
         return img
 
-if __name__ == "__main__":
-    # Example usage
+def main():
     labels = pd.read_csv("/cs/student/project_msc/2025/aibh/jgomezbe/meta_data.csv")
-    input_path = "/cs/student/project_msc/2025/aibh/jgomezbe/images"  # Replace with your input directory path
-    output_path = "/cs/student/project_msc/2025/aibh/jgomezbe/classifier_images"  # Replace with your desired output directory path
+    input_path = "/cs/student/project_msc/2025/aibh/jgomezbe/images"
+    output_path = "/cs/student/project_msc/2025/aibh/jgomezbe/classifier_images"
+
     jobs = build_jobs(input_path, output_path, labels)
     print(f"Total jobs: {len(jobs)}")
 
@@ -121,3 +114,8 @@ if __name__ == "__main__":
 
     for p in processes:
         p.join()
+
+
+if __name__ == "__main__":
+    mp.set_start_method("spawn", force=True)
+    main()

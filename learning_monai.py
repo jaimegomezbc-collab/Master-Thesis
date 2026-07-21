@@ -40,11 +40,11 @@ class classifier_dataset(torch.utils.data.Dataset):
 
 if __name__ == "__main__":
     directory = os.environ.get("MONAI_DATA_DIRECTORY")
-    root_dir = tempfile.mkdtemp() if directory is None else directory
+    root_dir = "/cs/student/project_msc/2025/aibh/jgomezbe/Master-Thesis"
     print(root_dir)
-    training_dir = r"C:\Users\jaime\OneDrive\Downloads\archive (1)\MU-Diff images\processed\train"
-    val_dir = r"C:\Users\jaime\OneDrive\Downloads\archive (1)\MU-Diff images\processed\val"
-    test_dir = r"C:\Users\jaime\OneDrive\Downloads\archive (1)\MU-Diff images\processed\test"
+    training_dir = "/cs/student/project_msc/2025/aibh/jgomezbe/classifier_images/train"
+    val_dir = "/cs/student/project_msc/2025/aibh/jgomezbe/classifier_images/val"
+    test_dir = "/cs/student/project_msc/2025/aibh/jgomezbe/classifier_images/test"
     class_names = ['healthy','tumour']
     num_class = len(class_names)
     training_image_files = [
@@ -103,19 +103,19 @@ if __name__ == "__main__":
     y_trans = Compose([AsDiscrete(to_onehot=num_class)])
 
     train_ds = classifier_dataset(train_x, train_y, train_transforms)
-    train_loader = DataLoader(train_ds, batch_size=32, shuffle=True, num_workers=8)
+    train_loader = DataLoader(train_ds, batch_size=64, shuffle=True, num_workers=8)
 
     val_ds = classifier_dataset(val_x, val_y, val_transforms)
-    val_loader = DataLoader(val_ds, batch_size=32, num_workers=8)
+    val_loader = DataLoader(val_ds, batch_size=64, num_workers=8)
 
     test_ds = classifier_dataset(test_x, test_y, val_transforms)
-    test_loader = DataLoader(test_ds, batch_size=32, num_workers=8)
+    test_loader = DataLoader(test_ds, batch_size=64, num_workers=8)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = DenseNet121(spatial_dims=2, in_channels=1, out_channels=num_class).to(device)
     loss_function = torch.nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), 1e-5)
-    max_epochs = 4
+    max_epochs = 10
     val_interval = 1
     auc_metric = ROCAUCMetric()
 
@@ -215,6 +215,3 @@ if __name__ == "__main__":
                 y_pred.append(pred[i].item())
 
     print(classification_report(y_true, y_pred, target_names=class_names, digits=4))
-
-    if directory is None:
-        shutil.rmtree(root_dir)

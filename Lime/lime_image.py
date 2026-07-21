@@ -4,14 +4,12 @@ Functions for explaining classifiers that use Image data.
 import copy
 from functools import partial
 
-from MONAI.monai.utils.misc import progress_bar
 import numpy as np
 import sklearn
 from sklearn.utils import check_random_state
 from skimage.color import gray2rgb
 from tqdm.auto import tqdm
-
-
+import matplotlib.pyplot as plt
 from . import lime_base
 from .wrappers.scikit_image import SegmentationAlgorithm
 
@@ -176,21 +174,24 @@ class LimeImageExplainer(object):
             explanations.
         """
         if n_modes != 1:
-            final_segments = np.empty((image.shape[0], image.shape[1], 0), dtype=np.int8)
-            final_fudged_image = np.empty((image.shape[0], image.shape[1], 0), dtype=np.int8)
+            final_segments = None
+            final_fudged_image = None
             for i in range(n_modes):
-                current_image = image[:,:,i]
+                current_image = image[i,:,:]
                 if len(current_image.shape) == 2:
                     current_image = gray2rgb(current_image)
                 if random_seed is None:
                     random_seed = self.random_state.randint(0, high=1000)
                 if segmentation_fn is None:
-                    segmentation_fn = SegmentationAlgorithm('quickshift', kernel_size=4,
+                    segmentation_fn = SegmentationAlgorithm('quickshift', kernel_size=2,
                                                             max_dist=200, ratio=0.2,
                                                             random_seed=random_seed)
                 segments = segmentation_fn(current_image)
-                final_segments = np.concatenate((final_segments, segments+len(np.unique(final_segments))), axis=2)
-                fudged_image = current_image.copy()
+                if final_segments is None:
+                    final_segments = segments.copy()[None,...]
+                else:
+                    final_segments = np.concatenate((final_segments, (segments + len(np.unique(final_segments)))[None, ...]), axis=0)
+                fudged_image = current_image[:,:,0].copy()
                 if hide_color is None:
                     for x in np.unique(segments):
                         fudged_image[segments == x] = (
@@ -199,8 +200,10 @@ class LimeImageExplainer(object):
                             np.mean(current_image[segments == x][:, 2]))
                 else:
                     fudged_image[:] = hide_color
-                final_fudged_image = np.concatenate((final_fudged_image, fudged_image), axis=2)
-
+                if final_fudged_image is None:
+                    final_fudged_image = fudged_image.copy()[None,...]
+                else:
+                    final_fudged_image = np.concatenate((final_fudged_image, fudged_image[None,...]), axis=0)
             top = labels
 
             data, labels = self.data_labels(image, final_fudged_image, final_segments,
@@ -237,9 +240,14 @@ class LimeImageExplainer(object):
                 random_seed = self.random_state.randint(0, high=1000)
 
             if segmentation_fn is None:
-                segmentation_fn = SegmentationAlgorithm('quickshift', kernel_size=4,
-                                                        max_dist=200, ratio=0.2,
-                                                        random_seed=random_seed)
+                segmentation_fn = SegmentationAlgorithm(
+                    'slic',
+                    n_segments=100,
+                    compactness=10,
+                    sigma=1,
+                    start_label=0
+                )
+            print(image.shape)
             segments = segmentation_fn(image)
 
             fudged_image = image.copy()
@@ -254,6 +262,9 @@ class LimeImageExplainer(object):
 
             top = labels
 
+            print(image.shape)
+            print(fudged_image.shape)
+            print(segments.shape)
             data, labels = self.data_labels(image, fudged_image, segments,
                                             classifier_fn, num_samples,
                                             batch_size=batch_size,

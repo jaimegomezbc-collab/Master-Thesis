@@ -1,4 +1,3 @@
-import matplotlib.pyplot as plt
 from PIL import Image
 import torch.nn as nn
 import numpy as np
@@ -36,7 +35,7 @@ def get_input_tensors(img):
     # unsqeeze converts single image to batch of 1
     return transf(img).unsqueeze(0)
 
-model = #Classifier model
+model = "/cs/student/project_msc/2025/aibh/jgomezbe/Master-Thesis/best_metric_model.pth"
 
 def get_pil_transform(): 
     transf = transforms.Compose([
@@ -319,6 +318,10 @@ def generate_synthetic_image(flair, t2, t1):
     load_checkpoint(r'MU-Diff_Model_Weights/brats/t1ce/gen_diffusive_1.pth', gen_diffusive_1, 'gen_diffusive_1', device=device)
     load_checkpoint(r'MU-Diff_Model_Weights/brats/t1ce/gen_diffusive_2.pth', gen_diffusive_2, 'gen_diffusive_2', device=device)
 
+    flair = torch.from_numpy(flair).unsqueeze(0).unsqueeze(0).cuda()
+    t2 = torch.from_numpy(t2).unsqueeze(0).unsqueeze(0).cuda()
+    t1 = torch.from_numpy(t1).unsqueeze(0).unsqueeze(0).cuda()
+    print(flair.shape)
 
     # Load images
     x1=torch.rot90(flair, k=-1, dims=(2, 3))
@@ -346,8 +349,8 @@ def generate_synthetic_image(flair, t2, t1):
 def batch_predict(images, n_modes=1):
     synthetic_images = []
     if n_modes != 1:
-        for i in range(0,images.shape[2],3):
-            synthetic_image = generate_synthetic_image(images[i], images[i+1], images[i+2])
+        for i in range(images.shape[0]):
+            synthetic_image = generate_synthetic_image(images[i][0], images[i][1], images[i][2])
             synthetic_images.append(synthetic_image)
     batch = torch.stack(tuple(preprocess_transform(i) for i in synthetic_images), dim=0)
 
@@ -359,14 +362,28 @@ def batch_predict(images, n_modes=1):
     probs = F.softmax(logits, dim=1)
     return probs.detach().cpu().numpy()
 
-from lime import lime_image
-img = np.array([flair_array, t2_array, t1_array])  # Assuming these are your input images
+from Lime import lime_image
+x1_path = r'demo/sample_data/flair.jpg'
+x2_path = r'demo/sample_data/t2.jpg'
+x3_path = r'demo/sample_data/t1.jpg'
+
+# Load images
+flair = load_image(x1_path)
+t2 = load_image(x2_path)
+t1 = load_image(x3_path)
+print(flair.shape)
+img = np.stack([
+    flair.detach().cpu().numpy().squeeze(0).squeeze(0),
+    t2.detach().cpu().numpy().squeeze(0).squeeze(0),
+    t1.detach().cpu().numpy().squeeze(0).squeeze(0)
+], axis=0)
 explainer = lime_image.LimeImageExplainer()
-explanation = explainer.explain_instance(np.array(pill_transf(img)), 
+explanation = explainer.explain_instance(img,
                                          batch_predict, # classification function
-                                         top_labels=5, 
+                                         top_labels=2,
                                          hide_color=0, 
-                                         num_samples=1000) # number of images that will be sent to classification function
+                                         num_samples=1000,
+                                         n_modes = 3)
 from skimage.segmentation import mark_boundaries
 temp, mask = explanation.get_image_and_mask(explanation.top_labels[0], positive_only=True, num_features=5, hide_rest=False)
 plt.figure(figsize=(10, 10))
