@@ -16,7 +16,8 @@ import torchvision.transforms
 import matplotlib.pyplot as plt
 from matplotlib.widgets import RectangleSelector
 from torch.utils.checkpoint import checkpoint
-from captum.attr import Saliency, IntegratedGradients
+from captum.attr import Saliency, IntegratedGradients, NoiseTunnel
+import time
 
 
 def select_roi_interactive(image_2d):
@@ -302,7 +303,17 @@ def _reduce_attr(attr, positive_only=False):
     with torch.no_grad():
         if positive_only:
             attr = torch.clamp(attr, min=0.0)
+            return attr.mean().item()
         return attr.abs().mean().item()
+
+def _normalize_map(sm):
+    sm = sm.detach()
+    thresh = torch.quantile(sm.flatten(), 0.95)
+    sm = torch.where(sm < thresh, torch.zeros_like(sm), sm)
+    sm_min = sm.min()
+    sm_max = sm.max()
+    return (sm - sm_min) / (sm_max - sm_min + 1e-8)
+
 
 
 def sample_from_model(
@@ -324,33 +335,44 @@ def sample_from_model(
         normalize_saliency_maps=True,
         attribution_method="saliency",  # "saliency" or "ig"
         ig_steps=64,
-):
+        sg_nt_samples=8,
+        sg_nt_samples_batch_size=2,
+        sg_stdevs=0.10,
+    ):
     x = x_init
     attributor = DiffusionAttributor(generator1, generator2)
+    methods = tuple(attribution_method)
+    valid_methods = {"saliency", "IntGrad", "SmoothGrad"}
+    for m in methods:
+        if m not in valid_methods:
+            raise ValueError(f"Unknown attribution method: {m}")
 
     with torch.no_grad():
         unc_accum = torch.zeros_like(x_init)
 
     modality_scores = {
-        "flair": 0.0,
-        "t2": 0.0,
-        "t1": 0.0,
+        m:{"flair": 0.0,"t2": 0.0, "t1": 0.0}
+        for m in methods
     }
 
     saliency_maps = None
-    saliency_steps = 0
+    saliency_steps = {m: 0 for m in methods}
 
     if return_saliency_maps:
         saliency_maps = {
-            "flair": torch.zeros_like(cond1),
-            "t2": torch.zeros_like(cond2),
-            "t1": torch.zeros_like(cond3),
+            m: {
+                "flair": torch.zeros_like(cond1),
+                "t2": torch.zeros_like(cond2),
+                "t1": torch.zeros_like(cond3),
+            }
+            for m in methods
         }
 
     if step_stride is None:
         step_stride = 1 if track_modality_contrib else None
 
     for i in reversed(range(n_time)):
+        print(i)
         t = torch.full((x.size(0),), i, dtype=torch.int64, device=x.device)
         t_time = t
         latent_z = torch.randn(x.size(0), opt.nz, device=x.device)
@@ -367,6 +389,7 @@ def sample_from_model(
             cond3_step = cond3.detach().clone().requires_grad_(True)
 
             inputs = (cond1_step, cond2_step, cond3_step)
+            baselines = tuple(torch.zeros_like(inp) for inp in inputs)
 
             forward_func = attributor.make_forward_func(
                 x=x,
@@ -374,48 +397,48 @@ def sample_from_model(
                 latent_z=latent_z,
                 roi_mask=roi_mask,
             )
-            for method in attribution_method:
-                if method == "saliency":
-                    attr_method = Saliency(forward_func)
-                    s1, s2, s3 = attr_method.attribute(
+
+            attrs = {}
+
+            if "saliency" or "SmoothGrad" in methods:
+                sal = Saliency(forward_func)
+
+                if "saliency" in methods:
+                    attrs["saliency"] = sal.attribute(
                         inputs=inputs,
                         abs=False,
                     )
-                elif method == "ig":
-                    attr_method = IntegratedGradients(forward_func)
-                    i1, i2, i3 = attr_method.attribute(
+
+                if "SmoothGrad" in methods:
+                    nt_sal = NoiseTunnel(sal)
+                    attrs["SmoothGrad"] = nt_sal.attribute(
                         inputs=inputs,
-                        baselines=(
-                            torch.zeros_like(cond1_step),
-                            torch.zeros_like(cond2_step),
-                            torch.zeros_like(cond3_step),
-                        ),
-                        n_steps=ig_steps,
-                        method="gausslegendre",
+                        nt_type="smoothgrad",
+                        nt_samples=sg_nt_samples,
+                        nt_samples_batch_size=sg_nt_samples_batch_size,
+                        stdevs=sg_stdevs,
+                        abs=False,
                     )
-                else:
-                    raise ValueError(f"Unknown attribution_method: {attribution_method}")
 
-            with torch.no_grad():
-                if "saliency" in attribution_method:
-                    modality_scores["flair"] += _reduce_attr(s1, positive_only=positive_only)
-                    modality_scores["t2"] += _reduce_attr(s2, positive_only=positive_only)
-                    modality_scores["t1"] += _reduce_attr(s3, positive_only=positive_only)
-                elif "ig" in attribution_method:
-                    modality_scores["flair"] += _reduce_attr(i1, positive_only=positive_only)
-                    modality_scores["t2"] += _reduce_attr(i2, positive_only=positive_only)
-                    modality_scores["t1"] += _reduce_attr(i3, positive_only=positive_only)
+            if "IntGrad" in methods:
+                ig = IntegratedGradients(forward_func)
+                attrs["IntGrad"] = ig.attribute(
+                    inputs=inputs,
+                    baselines=baselines,
+                    n_steps=ig_steps,
+                    method="gausslegendre",
+                )
 
-                if return_saliency_maps and "saliency" in attribution_method:
-                    saliency_maps["flair"] += s1.detach()
-                    saliency_maps["t2"] += s2.detach()
-                    saliency_maps["t1"] += s3.detach()
-                    saliency_steps += 1
-                elif return_saliency_maps and "ig" in attribution_method:
-                    saliency_maps["flair"] += i1.detach()
-                    saliency_maps["t2"] += i2.detach()
-                    saliency_maps["t1"] += i3.detach()
-                    saliency_steps += 1
+            for method_name, (a1, a2, a3) in attrs.items():
+                modality_scores[method_name]["flair"] += _reduce_attr(a1, positive_only=positive_only)
+                modality_scores[method_name]["t2"] += _reduce_attr(a2, positive_only=positive_only)
+                modality_scores[method_name]["t1"] += _reduce_attr(a3, positive_only=positive_only)
+
+                if return_saliency_maps:
+                    saliency_maps[method_name]["flair"] += a1.detach()
+                    saliency_maps[method_name]["t2"] += a2.detach()
+                    saliency_maps[method_name]["t1"] += a3.detach()
+                    saliency_steps[method_name] += 1
 
             with torch.no_grad():
                 x_0_1, x_0_2 = attributor.forward_outputs(
@@ -430,16 +453,16 @@ def sample_from_model(
                 unc_map_t = torch.abs(x_0_1[:, [0], :] - x_0_2[:, [0], :])
                 unc_accum = unc_accum + unc_map_t
 
-                x_new = sample_posterior_combine(
+                x = sample_posterior_combine(
                     coefficients,
                     x_0_1[:, [0], :].detach(),
                     x_0_2[:, [0], :].detach(),
                     x,
                     t,
-                )
-                x = x_new.detach()
+                ).detach()
 
-                del x_0_1, x_0_2, unc_map_t, x_new
+                del x_0_1, x_0_2, unc_map_t
+            del cond1_step, cond2_step, cond3_step, attrs, baselines, inputs
 
         else:
             with torch.no_grad():
@@ -449,16 +472,15 @@ def sample_from_model(
                 unc_map_t = torch.abs(x_0_1[:, [0], :] - x_0_2[:, [0], :])
                 unc_accum = unc_accum + unc_map_t
 
-                x_new = sample_posterior_combine(
+                x = sample_posterior_combine(
                     coefficients,
                     x_0_1[:, [0], :].detach(),
                     x_0_2[:, [0], :].detach(),
                     x,
                     t,
-                )
-                x = x_new.detach()
+                ).detach()
 
-                del x_0_1, x_0_2, unc_map_t, x_new
+                del x_0_1, x_0_2, unc_map_t
 
         del latent_z, t, t_time
 
@@ -468,29 +490,30 @@ def sample_from_model(
     unc = unc_accum / n_time
 
     if track_modality_contrib:
-        total = modality_scores["flair"] + modality_scores["t2"] + modality_scores["t1"] + 1e-8
-        modality_scores_norm = {
-            "flair": modality_scores["flair"] / total,
-            "t2": modality_scores["t2"] / total,
-            "t1": modality_scores["t1"] / total,
-        }
+        modality_scores_norm = {}
+        for m in methods:
+            total = (
+                    modality_scores[m]["flair"]
+                    + modality_scores[m]["t2"]
+                    + modality_scores[m]["t1"]
+                    + 1e-8
+            )
+            modality_scores_norm[m] = {
+                "flair": modality_scores[m]["flair"] / total,
+                "t2": modality_scores[m]["t2"] / total,
+                "t1": modality_scores[m]["t1"] / total,
+            }
 
         if return_saliency_maps:
-            if saliency_steps > 0:
-                saliency_maps["flair"] /= saliency_steps
-                saliency_maps["t2"] /= saliency_steps
-                saliency_maps["t1"] /= saliency_steps
+            for m in methods:
+                if saliency_steps[m] > 0:
+                    saliency_maps[m]["flair"] /= saliency_steps[m]
+                    saliency_maps[m]["t2"] /= saliency_steps[m]
+                    saliency_maps[m]["t1"] /= saliency_steps[m]
 
-            if normalize_saliency_maps:
-                for k in saliency_maps:
-                    sm = saliency_maps[k]
-                    # reduce small values (percentile threshold)
-                    sm_np = sm.cpu().numpy()
-                    thresh = np.percentile(sm_np, 95)  # top 5% strongest
-                    sm = torch.where(sm < thresh, torch.zeros_like(sm), sm)
-                    sm_min = sm.min()
-                    sm_max = sm.max()
-                    saliency_maps[k] = (sm - sm_min) / (sm_max - sm_min + 1e-8)
+                if normalize_saliency_maps:
+                    for k in saliency_maps[m]:
+                        saliency_maps[m][k] = _normalize_map(saliency_maps[m][k])
 
             return x, unc, modality_scores, modality_scores_norm, saliency_maps
 
@@ -668,12 +691,6 @@ if __name__ == "__main__":
     # Squeeze the tensor to remove the batch and channel dimensions for visualization
     sample_inputs = sample_inputs.squeeze(0).squeeze(0)  # Shape: (256, 256, 5)
 
-    # Plot the concatenated image
-    plt.figure(figsize=(10, 10))
-    plt.imshow(sample_inputs.cpu().numpy(), cmap='gray')  # Display in grayscale
-    plt.axis('off')  # Hide axes
-    plt.show()
-
     T = get_time_schedule(args, device)
     pos_coeff = Posterior_Coefficients(args, device)
 
@@ -681,6 +698,7 @@ if __name__ == "__main__":
     x1_t = torch.randn_like(real_data)
     print('Prep 3: Done')
 
+    start = time.time()
     fake_sample, unc, modality_scores_raw, modality_scores_norm, saliency_maps = sample_from_model(
         pos_coeff,
         gen_diffusive_1,
@@ -698,19 +716,23 @@ if __name__ == "__main__":
         positive_only=False,  # abs gradients
         return_saliency_maps=True,
         normalize_saliency_maps=True,
-        attribution_method=["ig"],  # "saliency" or "ig"
+        attribution_method=["SmoothGrad"],  # "saliency" or "ig"
         ig_steps=4,
+        sg_nt_samples=8,
+        sg_nt_samples_batch_size=2,
+        sg_stdevs=0.10,
     )
+    print(f"Elapsed time: {time.time()-start}")
 
-    print("\nRaw modality scores:")
-    print("FLAIR:", round(modality_scores_raw["flair"], 4))
-    print("T2:   ", round(modality_scores_raw["t2"], 4))
-    print("T1:   ", round(modality_scores_raw["t1"], 4))
-
-    print("\nNormalized modality fractions:")
-    print("FLAIR:", round(modality_scores_norm["flair"], 4))
-    print("T2:   ", round(modality_scores_norm["t2"], 4))
-    print("T1:   ", round(modality_scores_norm["t1"], 4))
+    for method in modality_scores_raw:
+        print(f"\nRaw modality scores [{method}]")
+        print("FLAIR:", round(modality_scores_raw[method]["flair"], 4))
+        print("T2:   ", round(modality_scores_raw[method]["t2"], 4))
+        print("T1:   ", round(modality_scores_raw[method]["t1"], 4))
+        print(f"\nNormalized modality fractions[{method}]")
+        print("FLAIR:", round(modality_scores_norm[method]["flair"], 4))
+        print("T2:   ", round(modality_scores_norm[method]["t2"], 4))
+        print("T1:   ", round(modality_scores_norm[method]["t1"], 4))
 
     unc = unc - unc.min()
     unc = unc / (unc.max() + 1e-8)
@@ -739,22 +761,23 @@ if __name__ == "__main__":
     plt.savefig("uncertainty_overlay.png", bbox_inches="tight", pad_inches=0)
     plt.axis('off')
 
-    fig, axes = plt.subplots(1, 3, figsize=(12, 8))
-    axes[0].imshow(x1.squeeze(0).squeeze(0).cpu().numpy(), cmap='gray')
-    axes[0].imshow(saliency_maps["flair"].squeeze(0).squeeze(0).cpu().numpy(), cmap='hot', alpha=0.45)
-    axes[0].set_title("FLAIR saliency")
+    for method in modality_scores_raw:
+        fig, axes = plt.subplots(1, 3, figsize=(12, 8))
+        axes[0].imshow(x1.squeeze(0).squeeze(0).cpu().numpy(), cmap='gray')
+        axes[0].imshow(saliency_maps[method]["flair"].squeeze(0).squeeze(0).cpu().numpy(), cmap='hot', alpha=0.45)
+        axes[0].set_title(f"FLAIR {method}")
 
-    axes[1].imshow(x2.squeeze(0).squeeze(0).cpu().numpy(), cmap='gray')
-    axes[1].imshow(saliency_maps["t2"].squeeze(0).squeeze(0).cpu().numpy(), cmap='hot', alpha=0.45)
-    axes[1].set_title("T2 saliency")
+        axes[1].imshow(x2.squeeze(0).squeeze(0).cpu().numpy(), cmap='gray')
+        axes[1].imshow(saliency_maps[method]["t2"].squeeze(0).squeeze(0).cpu().numpy(), cmap='hot', alpha=0.45)
+        axes[1].set_title(f"T2 {method}")
 
-    axes[2].imshow(x3.squeeze(0).squeeze(0).cpu().numpy(), cmap='gray')
-    axes[2].imshow(saliency_maps["t1"].squeeze(0).squeeze(0).cpu().numpy(), cmap='hot', alpha=0.45)
-    axes[2].set_title("T1 saliency")
+        axes[2].imshow(x3.squeeze(0).squeeze(0).cpu().numpy(), cmap='gray')
+        axes[2].imshow(saliency_maps[method]["t1"].squeeze(0).squeeze(0).cpu().numpy(), cmap='hot', alpha=0.45)
+        axes[2].set_title(f"T1 {method}")
 
-    for ax in axes.ravel():
-        ax.axis("off")
+        for ax in axes.ravel():
+            ax.axis("off")
 
-    plt.tight_layout()
-    plt.savefig("modality_captum_IntGrad.png", dpi=200, bbox_inches="tight")
+        plt.tight_layout()
+        plt.savefig(f"modality_captum_{method}.png", dpi=200, bbox_inches="tight")
     plt.show()
