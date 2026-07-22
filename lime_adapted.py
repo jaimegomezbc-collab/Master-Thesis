@@ -404,5 +404,5 @@ plt.imshow(ndimage.rotate(temp[2,:,:],270),cmap='gray')
 plt.imshow(ndimage.rotate(img_boundry3,270), alpha=0.5)
 plt.title('T1')  # Add title
 plt.axis('off')
-plt.savefig("LIME_explanation.png", bbox_inches="tight", pad_inches=0)
+plt.savefig("LIME_explanation.png")
 plt.show()
