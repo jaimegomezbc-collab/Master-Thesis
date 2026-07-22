@@ -7,11 +7,13 @@ from backbones.ncsnpp_generator_adagn_feat import NCSNpp_adaptive
 from PIL import Image
 import matplotlib.pyplot as plt
 import argparse
+from scipy import ndimage
 
 import torch
 from torchvision import models, transforms
 from torch.autograd import Variable
 import torch.nn.functional as F
+from monai.networks.nets import DenseNet121
 
 def get_image(path):
     with open(os.path.abspath(path), 'rb') as f:
@@ -35,8 +37,9 @@ def get_input_tensors(img):
     # unsqeeze converts single image to batch of 1
     return transf(img).unsqueeze(0)
 
-model = "/cs/student/project_msc/2025/aibh/jgomezbe/Master-Thesis/best_metric_model.pth"
-
+model = DenseNet121(spatial_dims=2, in_channels=1, out_channels=2)
+model.load_state_dict(torch.load("/cs/student/project_msc/2025/aibh/jgomezbe/Master-Thesis/best_metric_model.pth", weights_only=True))
+model.eval
 def get_pil_transform(): 
     transf = transforms.Compose([
         transforms.Resize((256, 256)),
@@ -46,11 +49,8 @@ def get_pil_transform():
     return transf
 
 def get_preprocess_transform():
-    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                    std=[0.229, 0.224, 0.225])     
     transf = transforms.Compose([
         transforms.ToTensor(),
-        normalize
     ])    
 
     return transf    
@@ -347,7 +347,6 @@ def generate_synthetic_image(flair, t2, t1):
 
 def batch_predict(images, n_modes=1):
     synthetic_images = []
-    model.eval()
     if n_modes != 1:
         for i in range(images.shape[0]):
             print(i)
@@ -385,21 +384,25 @@ explanation = explainer.explain_instance(img,
                                          num_samples=1000,
                                          n_modes = 3)
 from skimage.segmentation import mark_boundaries
-temp, mask = explanation.get_image_and_mask(explanation.top_labels[0], positive_only=True, num_features=5, hide_rest=False)
+temp, mask = explanation.get_image_and_mask(explanation.top_labels[0], positive_only=True, num_features=10, hide_rest=False)
 plt.figure(figsize=(10, 10))
 plt.subplot(131)
-img_boundry1 = mark_boundaries(temp[:,:,0]/255.0, mask[:,:,0])
-plt.imshow(img_boundry1)  # Display in grayscale
+img_boundry1 = mark_boundaries(temp[0,:,:,]/255.0, mask[0,:,:])
+plt.imshow(ndimage.rotate(temp[0,:,:],270),cmap='gray')
+plt.imshow(ndimage.rotate(img_boundry1,270),alpha=0.5)  # Display in grayscale
 plt.title('FLAIR')  # Add title
 plt.axis('off')
 plt.subplot(132)
-img_boundry2 = mark_boundaries(temp[:,:,1]/255.0, mask[:,:,1])
-plt.imshow(img_boundry2)
+img_boundry2 = mark_boundaries(temp[1,:,:]/255.0, mask[1,:,:])
+plt.imshow(ndimage.rotate(temp[1,:,:],270),cmap='gray')
+plt.imshow(ndimage.rotate(img_boundry2,270),alpha=0.5)
 plt.title('T2')  # Add title
 plt.axis('off')
 plt.subplot(133)
-img_boundry3 = mark_boundaries(temp[:,:,2]/255.0, mask[:,:,2])
-plt.imshow(img_boundry3)
+img_boundry3 = mark_boundaries(temp[2,:,:]/255.0, mask[2,:,:])
+plt.imshow(ndimage.rotate(temp[2,:,:],270),cmap='gray')
+plt.imshow(ndimage.rotate(img_boundry3,270), alpha=0.5)
 plt.title('T1')  # Add title
 plt.axis('off')
+plt.savefig("LIME_explanation.png", bbox_inches="tight", pad_inches=0)
 plt.show()

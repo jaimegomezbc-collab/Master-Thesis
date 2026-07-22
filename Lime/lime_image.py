@@ -3,7 +3,7 @@ Functions for explaining classifiers that use Image data.
 """
 import copy
 from functools import partial
-
+import os
 import numpy as np
 import sklearn
 from sklearn.utils import check_random_state
@@ -128,7 +128,7 @@ class LimeImageExplainer(object):
     def explain_instance(self, image, classifier_fn, labels=(1,),
                          hide_color=None,
                          top_labels=5, num_features=100000, num_samples=1000,
-                         batch_size=3,
+                         batch_size=10,
                          segmentation_fn=None,
                          distance_metric='cosine',
                          model_regressor=None,
@@ -218,7 +218,7 @@ class LimeImageExplainer(object):
                 metric=distance_metric
             ).ravel()
 
-            ret_exp = ImageExplanation(image, segments)
+            ret_exp = ImageExplanation(image, final_segments)
             if top_labels:
                 top = np.argsort(labels[0])[-top_labels:]
                 ret_exp.top_labels = list(top)
@@ -247,7 +247,6 @@ class LimeImageExplainer(object):
                     sigma=1,
                     start_label=0
                 )
-            print(image.shape)
             segments = segmentation_fn(image)
 
             fudged_image = image.copy()
@@ -262,9 +261,6 @@ class LimeImageExplainer(object):
 
             top = labels
 
-            print(image.shape)
-            print(fudged_image.shape)
-            print(segments.shape)
             data, labels = self.data_labels(image, fudged_image, segments,
                                             classifier_fn, num_samples,
                                             batch_size=batch_size,
@@ -320,16 +316,35 @@ class LimeImageExplainer(object):
                 labels: prediction probabilities matrix
         """
         n_features = np.unique(segments).shape[0]
-        data = self.random_state.randint(0, 2, num_samples * n_features)\
-            .reshape((num_samples, n_features))
-        labels = []
-        data[0, :] = 1
+        checkpoint_path = "lime_checkpoint.npz"
+        if os.path.exists(checkpoint_path):
+            ckpt = np.load(checkpoint_path, allow_pickle=True)
+            data = ckpt["data"]
+            labels = ckpt["labels"].tolist()
+            start_idx = int(ckpt["start_idx"])
+
+            if data.shape != (num_samples, n_features):
+                raise ValueError(
+                    f"Checkpoint data shape {data.shape} does not match current "
+                    f"run {(num_samples, n_features)}"
+                )
+        else:
+            data = self.random_state.randint(0, 2, num_samples * n_features) \
+                .reshape((num_samples, n_features))
+            data[0, :] = 1
+            labels = []
+            start_idx = 0
+
+        rows = range(start_idx, num_samples)
+        if progress_bar:
+            rows = tqdm(rows, initial=start_idx, total=num_samples)
         imgs = []
-        rows = tqdm(data) if progress_bar else data
-        for row in rows:
+        for idx in rows:
+            row = data[idx]
             temp = copy.deepcopy(image)
+
             zeros = np.where(row == 0)[0]
-            mask = np.zeros(segments.shape).astype(bool)
+            mask = np.zeros(segments.shape, dtype=bool)
             for z in zeros:
                 mask[segments == z] = True
             temp[mask] = fudged_image[mask]
@@ -340,6 +355,13 @@ class LimeImageExplainer(object):
                 else:
                     preds = classifier_fn(np.array(imgs))
                 labels.extend(preds)
+                processed_rows = idx + 1
+                np.savez(
+                    checkpoint_path,
+                    data=data,
+                    labels=np.array(labels),
+                    start_idx=processed_rows
+                )
                 imgs = []
         if len(imgs) > 0:
             if n_modes != 1:
@@ -347,4 +369,11 @@ class LimeImageExplainer(object):
             else:
                 preds = classifier_fn(np.array(imgs))
             labels.extend(preds)
+            processed_rows = num_samples
+            np.savez(
+                checkpoint_path,
+                data=data,
+                labels=np.array(labels),
+                start_idx=processed_rows
+            )
         return data, np.array(labels)

@@ -1,6 +1,5 @@
 import os
 from pathlib import Path
-
 os.environ["TORCH_EXTENSIONS_DIR"] = str(Path(os.environ["CONDA_PREFIX"]) / "torch_extensions")
 os.environ["TORCH_CUDA_ARCH_LIST"] = "8.0"
 from backbones.ncsnpp_generator_adagn_feat import NCSNpp
@@ -17,7 +16,6 @@ import matplotlib.pyplot as plt
 from matplotlib.widgets import RectangleSelector
 from torch.utils.checkpoint import checkpoint
 from captum.attr import Saliency, IntegratedGradients
-
 
 def select_roi_interactive(image_2d):
     coords = {}
@@ -56,11 +54,9 @@ def select_roi_interactive(image_2d):
 
     return coords
 
-
 def modality_score(sal):
     # sum over spatial dims, optionally also channels
-    return sal.sum(dim=(1, 2, 3), keepdim=True)  # or (2,3) if already [1,1,H,W]
-
+    return sal.sum(dim=(1, 2, 3), keepdim=True)   # or (2,3) if already [1,1,H,W]
 
 def load_checkpoint(checkpoint_dir, netG, name_of_network, device='cuda:0'):
     checkpoint_file = checkpoint_dir.format(name_of_network)
@@ -72,7 +68,6 @@ def load_checkpoint(checkpoint_dir, netG, name_of_network, device='cuda:0'):
         ckpt[key[7:]] = ckpt.pop(key)
     netG.load_state_dict(ckpt, strict=False)
     netG.eval()
-
 
 # %% Diffusion coefficients
 def var_func_vp(t, beta_min, beta_max):
@@ -206,21 +201,20 @@ def sample_posterior_combine(coefficients, x_0_1, x_0_2, x_t, t):
 
     return sample_x_pos
 
-
 class DiffusionAttributor:
     def __init__(self, generator1, generator2):
         self.generator1 = generator1
         self.generator2 = generator2
 
     def forward_outputs(
-            self,
-            cond1_in,
-            cond2_in,
-            cond3_in,
-            *,
-            x,
-            t_time,
-            latent_z,
+        self,
+        cond1_in,
+        cond2_in,
+        cond3_in,
+        *,
+        x,
+        t_time,
+        latent_z,
     ):
         B_ig = cond1_in.shape[0]
 
@@ -254,15 +248,15 @@ class DiffusionAttributor:
         return x_0_1, x_0_2
 
     def forward_score(
-            self,
-            cond1_in,
-            cond2_in,
-            cond3_in,
-            *,
-            x,
-            t_time,
-            latent_z,
-            roi_mask=None,
+        self,
+        cond1_in,
+        cond2_in,
+        cond3_in,
+        *,
+        x,
+        t_time,
+        latent_z,
+        roi_mask=None,
     ):
         _, x_0_2 = self.forward_outputs(
             cond1_in,
@@ -294,7 +288,6 @@ class DiffusionAttributor:
                 latent_z=latent_z,
                 roi_mask=roi_mask,
             )
-
         return forward_func
 
 
@@ -306,24 +299,24 @@ def _reduce_attr(attr, positive_only=False):
 
 
 def sample_from_model(
-        coefficients,
-        generator1,
-        cond1,
-        generator2,
-        cond2,
-        cond3,
-        n_time,
-        x_init,
-        T,
-        opt,
-        track_modality_contrib=False,
-        step_stride=None,
-        roi_mask=None,
-        positive_only=False,
-        return_saliency_maps=False,
-        normalize_saliency_maps=True,
-        attribution_method="saliency",  # "saliency" or "ig"
-        ig_steps=64,
+    coefficients,
+    generator1,
+    cond1,
+    generator2,
+    cond2,
+    cond3,
+    n_time,
+    x_init,
+    T,
+    opt,
+    track_modality_contrib=False,
+    step_stride=None,
+    roi_mask=None,
+    positive_only=False,
+    return_saliency_maps=False,
+    normalize_saliency_maps=True,
+    attribution_method="saliency",   # "saliency" or "ig"
+    ig_steps=64,
 ):
     x = x_init
     attributor = DiffusionAttributor(generator1, generator2)
@@ -356,9 +349,9 @@ def sample_from_model(
         latent_z = torch.randn(x.size(0), opt.nz, device=x.device)
 
         do_attr = (
-                track_modality_contrib
-                and (step_stride is not None)
-                and (i % step_stride == 0)
+            track_modality_contrib
+            and (step_stride is not None)
+            and (i % step_stride == 0)
         )
 
         if do_attr:
@@ -508,7 +501,6 @@ def normalize(image):
     image = (image - min_) / scale
     return image
 
-
 # Pre-process using IRM min-max scaling
 def irm_min_max_preprocess(image, low_perc=1, high_perc=99):
     """Main pre-processing function for removing outliers and scaling."""
@@ -517,7 +509,6 @@ def irm_min_max_preprocess(image, low_perc=1, high_perc=99):
     image = np.clip(image, low, high)
     image = normalize(image)
     return image
-
 
 # Load and preprocess a single image
 def load_image(image_path, size=(256, 256)):
@@ -528,24 +519,24 @@ def load_image(image_path, size=(256, 256)):
         torchvision.transforms.Resize(size),
         torchvision.transforms.ToTensor()  # This will convert the image to a tensor of shape (1, 256, 256)
     ])
-
+    
     img = Image.open(image_path).convert("L")  # Convert to grayscale ('L' mode for single channel)
     img_np = np.array(img)  # Convert to numpy array for min-max scaling
 
+    
     # Apply IRM min-max pre-processing
     img_np = irm_min_max_preprocess(img_np)
-
+    
     # Normalize to [-1, 1] by applying (data - 0.5) / 0.5
     img_np = (img_np - 0.5) / 0.5
-
+    
     # Convert back to tensor and add batch and channel dimensions
     img_tensor = torch.tensor(img_np, dtype=torch.float32).unsqueeze(0).unsqueeze(0)  # Shape: (1, 1, 256, 256)
-
+    
     return img_tensor
 
-
 if __name__ == "__main__":
-    device = 'cuda:0'
+    device='cuda:0'
     # Define all arguments as a Namespace for use in Jupyter Notebook
     args = argparse.Namespace(
         # General setup
@@ -698,19 +689,19 @@ if __name__ == "__main__":
         positive_only=False,  # abs gradients
         return_saliency_maps=True,
         normalize_saliency_maps=True,
-        attribution_method=["ig"],  # "saliency" or "ig"
+        attribution_method=["ig"],   # "saliency" or "ig"
         ig_steps=4,
     )
 
     print("\nRaw modality scores:")
-    print("FLAIR:", round(modality_scores_raw["flair"], 4))
-    print("T2:   ", round(modality_scores_raw["t2"], 4))
-    print("T1:   ", round(modality_scores_raw["t1"], 4))
+    print("FLAIR:", round(modality_scores_raw["flair"],4))
+    print("T2:   ", round(modality_scores_raw["t2"],4))
+    print("T1:   ", round(modality_scores_raw["t1"],4))
 
     print("\nNormalized modality fractions:")
-    print("FLAIR:", round(modality_scores_norm["flair"], 4))
-    print("T2:   ", round(modality_scores_norm["t2"], 4))
-    print("T1:   ", round(modality_scores_norm["t1"], 4))
+    print("FLAIR:", round(modality_scores_norm["flair"],4))
+    print("T2:   ", round(modality_scores_norm["t2"],4))
+    print("T1:   ", round(modality_scores_norm["t1"],4))
 
     unc = unc - unc.min()
     unc = unc / (unc.max() + 1e-8)
