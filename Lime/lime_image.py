@@ -320,7 +320,7 @@ class LimeImageExplainer(object):
                 labels: prediction probabilities matrix
         """
         n_features = np.unique(segments).shape[0]
-        checkpoint_path = f"lime_checkpoint_{img_name}.npz"
+        checkpoint_path = f"checkpoints/lime_checkpoint_{img_name}.npz"
         if os.path.exists(checkpoint_path):
             ckpt = np.load(checkpoint_path, allow_pickle=True)
             data = ckpt["data"]
