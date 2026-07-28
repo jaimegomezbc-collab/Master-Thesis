@@ -15,6 +15,7 @@ from matplotlib.widgets import RectangleSelector
 from torch.utils.checkpoint import checkpoint
 from captum.attr import Saliency, IntegratedGradients, NoiseTunnel
 import time
+import json
 
 
 def select_roi_interactive(image_2d):
@@ -276,6 +277,7 @@ class DiffusionAttributor:
         if roi_mask is None:
             score = target.sum()
         else:
+            roi_mask = roi_mask.to(target.device)
             score = (target * roi_mask).sum()
 
             # Make it 1-D of length 1 so Captum's gradient utils can index outputs[0]
@@ -540,26 +542,23 @@ def irm_min_max_preprocess(image, low_perc=1, high_perc=99):
 
 
 # Load and preprocess a single image
-def load_image(image_path, size=(256, 256)):
+def tensorize_image(img, size=(256, 256)):
     """
-    Loads an image from the specified path, preprocesses it, and returns it as a tensor with shape (1, 1, 256, 256).
+    Converts np into tensor and normalizes
     """
     transform = torchvision.transforms.Compose([
         torchvision.transforms.Resize(size),
         torchvision.transforms.ToTensor()  # This will convert the image to a tensor of shape (1, 256, 256)
     ])
 
-    img = Image.open(image_path).convert("L")  # Convert to grayscale ('L' mode for single channel)
-    img_np = np.array(img)  # Convert to numpy array for min-max scaling
-
     # Apply IRM min-max pre-processing
-    img_np = irm_min_max_preprocess(img_np)
+    img = irm_min_max_preprocess(img)
 
     # Normalize to [-1, 1] by applying (data - 0.5) / 0.5
-    img_np = (img_np - 0.5) / 0.5
+    img = (img - 0.5) / 0.5
 
     # Convert back to tensor and add batch and channel dimensions
-    img_tensor = torch.tensor(img_np, dtype=torch.float32).unsqueeze(0).unsqueeze(0)  # Shape: (1, 1, 256, 256)
+    img_tensor = torch.tensor(img, dtype=torch.float32).unsqueeze(0).unsqueeze(0)  # Shape: (1, 1, 256, 256)
 
     return img_tensor
 
@@ -641,177 +640,135 @@ if __name__ == "__main__":
 
     print('Prep 2: Done')
 
-    """ modalities = ['t1','t2','flair','t1ce']
-    for modality in modalities:
-        arr = np.load(rf"save_dir_path/{modality}/contrast.npy")
-        # If shape is (1, 1, 256, 256)
-        if arr.ndim == 4:
-            arr = arr.squeeze()          # -> (256, 256)
-       # If shape is (1, 1, 256)
-        if arr.ndim == 3:
-            arr = arr.squeeze()
-        arr = Image.fromarray(arr[79, 0:256, 0:256])
-        if modality == 't1ce':
-            real_data = preprocess_image(arr).cuda()  # shape: [C, H, W]
-        elif modality == 't1':
-            x3 = preprocess_image(arr).cuda()  # shape: [C, H, W]
-        elif modality == 't2':
-            x2 = preprocess_image(arr).cuda()  # shape: [C, H, W]
-        elif modality == 'flair':
-            x1 = preprocess_image(arr).cuda()  # shape: [C, H, W] """
-    image_folder_BraTS_healthy = ""
-    image_folder_BraTS_tumour = ""
-    image_folder_SF_health = ""
-    image_folder_SF_tumour = ""
-    image_folders = [image_folder_BraTS_healthy,image_folder_BraTS_tumour, image_folder_SF_health, image_folder_SF_tumour]
+    image_folder = "/cs/student/project_msc/2025/aibh/jgomezbe/UCSD-PTGBM/middle_slices/code_test"
+    contrast_folder = os.path.join(image_folder, "cet1")
     rois = {}
-    for image_folder in image_folders:
-        if image_folder == image_folder_BraTS_healthy or image_folder_SF_health:
-            for image_name in os.listdir(image_folder):
-                rois[image_name] = "Healthy"
-        else:
-            for image_name in os.listdir(image_folder):
-                roi = select_roi_interactive(real_for_roi)
-                roi_mask = torch.zeros_like(real_data)
-                roi_mask[:, :, roi['y1']:roi['y2'], roi['x1']:roi['x2']] = 1.0
-                rois[image_name] = roi_mask
+    for image_name in os.listdir(contrast_folder):
+        cet1 = np.load(os.path.join(contrast_folder,image_name))
+        cet1_tensor = tensorize_image(cet1)
+        roi = select_roi_interactive(cet1)
+        roi_mask = torch.zeros_like(cet1_tensor)
+        roi_mask[:, :, roi['y1']:roi['y2'], roi['x1']:roi['x2']] = 1.0
+        rois[image_name[:-4]] = roi_mask
 
+    for image_name in os.listdir(contrast_folder):
+        curr_fold = Path(image_folder)
+        output_dir = os.path.join("/cs/student/project_msc/2025/aibh/jgomezbe/Master-Thesis/Explanations",image_name[:-4])
+        os.makedirs(output_dir, exist_ok=True)
+        x1_path = os.path.join(image_folder,os.path.join("flair",image_name))
+        x2_path = os.path.join(image_folder,os.path.join("t2",image_name))
+        x3_path = os.path.join(image_folder,os.path.join("t1",image_name))
+        real_data_path = os.path.join(image_folder,os.path.join("cet1",image_name))
+        enhancement_mask_path = os.path.join(image_folder, os.path.join("enhanced_regions_mask", image_name))
+        # Load images
+        x1 = tensorize_image(np.load(x1_path)).cuda()
+        x2 = tensorize_image(np.load(x2_path)).cuda()
+        x3 = tensorize_image(np.load(x3_path)).cuda()
+        real_data = tensorize_image(np.load(real_data_path)).cuda()
+        enhancement_mask = np.load(enhancement_mask_path)
 
-        for image_folder in image_folders:
-            curr_fold = Path(image_folder)
-            output_dir = os.path.join(os.path.join("/cs/student/project_msc/2025/aibh/jgomezbe/Master-Thesis/Explanations"
-                                                   ,"/".join(curr_fold.parts[-2:])),image_name[:-4])
-            os.makedirs(output_dir, exist_ok=True)
-            for image_name in os.listdir(image_folder):
-                x1_path = os.path.join(os.path.dirname(image_name),os.path.join("flair",image_name))
-                x2_path = os.path.join(os.path.dirname(image_name),os.path.join("t2",image_name))
-                x3_path = os.path.join(os.path.dirname(image_name),os.path.join("t1",image_name))
-                real_data_path = os.path.join(os.path.dirname(image_name),os.path.join("flair",image_name))
-                # Load images
-                x1 = load_image(x1_path).cuda()
-                x2 = load_image(x2_path).cuda()
-                x3 = load_image(x3_path).cuda()
-                real_data = load_image(real_data_path).cuda()
+        roi_mask = rois[image_name[:-4]]
+        sample_inputs = torch.cat((x1, x2, x3, real_data), axis=-1)  # Concatenate along the width
 
-                x1 = torch.rot90(x1, k=-1, dims=(2, 3))
-                x2 = torch.rot90(x2, k=-1, dims=(2, 3))
-                x3 = torch.rot90(x3, k=-1, dims=(2, 3))
-                real_data = torch.rot90(real_data, k=-1, dims=(2, 3))
+        sample_inputs = sample_inputs.squeeze(0).squeeze(0)  # Shape: (256, 256, 5)
 
-                roi_mask = rois[image_name]
-                sample_inputs = torch.cat((x1, x2, x3, real_data), axis=-1)  # Concatenate along the width
+        T = get_time_schedule(args, device)
+        pos_coeff = Posterior_Coefficients(args, device)
 
-                sample_inputs = sample_inputs.squeeze(0).squeeze(0)  # Shape: (256, 256, 5)
+        # Initialize noisy input
+        x1_t = torch.randn_like(real_data)
+        print(f'Prep 3: Done. Current image: {image_name[:-4]}')
+        fake_sample, unc, modality_scores_raw, modality_scores_norm, saliency_maps = sample_from_model(
+            pos_coeff,
+            gen_diffusive_1,
+            x1,
+            gen_diffusive_2,
+            x2,
+            x3,
+            args.num_timesteps,
+            x1_t,
+            T,
+            args,
+            track_modality_contrib=True,
+            step_stride=1,  # 10 sampled timesteps over 1000
+            roi_mask=roi_mask,  # or lesion mask
+            positive_only=False,  # abs gradients
+            return_saliency_maps=True,
+            normalize_saliency_maps=True,
+            attribution_method=["saliency", "IntGrad", "SmoothGrad"],  # "saliency" or "ig"
+            ig_steps=4,
+            sg_nt_samples=8,
+            sg_nt_samples_batch_size=2,
+            sg_stdevs=0.10,
+        )
 
-                T = get_time_schedule(args, device)
-                pos_coeff = Posterior_Coefficients(args, device)
+        for method in modality_scores_raw:
+            print(f"\nRaw modality scores [{method}]")
+            print("FLAIR:", round(modality_scores_raw[method]["flair"], 4))
+            print("T2:   ", round(modality_scores_raw[method]["t2"], 4))
+            print("T1:   ", round(modality_scores_raw[method]["t1"], 4))
+            print(f"\nNormalized modality fractions[{method}]")
+            print("FLAIR:", round(modality_scores_norm[method]["flair"], 4))
+            print("T2:   ", round(modality_scores_norm[method]["t2"], 4))
+            print("T1:   ", round(modality_scores_norm[method]["t1"], 4))
 
-                # Initialize noisy input
-                x1_t = torch.randn_like(real_data)
-                print(f'Prep 3: Done. Current image: {image_name}')
-                if roi_mask == "Healthy":
-                    fake_sample, unc, modality_scores_raw, modality_scores_norm, saliency_maps = sample_from_model(
-                        pos_coeff,
-                        gen_diffusive_1,
-                        x1,
-                        gen_diffusive_2,
-                        x2,
-                        x3,
-                        args.num_timesteps,
-                        x1_t,
-                        T,
-                        args,
-                        track_modality_contrib=True,
-                        step_stride=1,  # 10 sampled timesteps over 1000
-                        roi_mask=None,  # or lesion mask
-                        positive_only=False,  # abs gradients
-                        return_saliency_maps=True,
-                        normalize_saliency_maps=True,
-                        attribution_method=["saliency", "IntGrad", "SmoothGrad"],  # "saliency" or "ig"
-                        ig_steps=4,
-                        sg_nt_samples=8,
-                        sg_nt_samples_batch_size=2,
-                        sg_stdevs=0.10,
-                    )
-                else:
-                    fake_sample, unc, modality_scores_raw, modality_scores_norm, saliency_maps = sample_from_model(
-                        pos_coeff,
-                        gen_diffusive_1,
-                        x1,
-                        gen_diffusive_2,
-                        x2,
-                        x3,
-                        args.num_timesteps,
-                        x1_t,
-                        T,
-                        args,
-                        track_modality_contrib=True,
-                        step_stride=1,  # 10 sampled timesteps over 1000
-                        roi_mask=roi_mask,  # or lesion mask
-                        positive_only=False,  # abs gradients
-                        return_saliency_maps=True,
-                        normalize_saliency_maps=True,
-                        attribution_method=["saliency", "IntGrad", "SmoothGrad"],  # "saliency" or "ig"
-                        ig_steps=4,
-                        sg_nt_samples=8,
-                        sg_nt_samples_batch_size=2,
-                        sg_stdevs=0.10,
-                    )
+        unc = unc - unc.min()
+        unc = unc / (unc.max() + 1e-8)
 
-                for method in modality_scores_raw:
-                    print(f"\nRaw modality scores [{method}]")
-                    print("FLAIR:", round(modality_scores_raw[method]["flair"], 4))
-                    print("T2:   ", round(modality_scores_raw[method]["t2"], 4))
-                    print("T1:   ", round(modality_scores_raw[method]["t1"], 4))
-                    print(f"\nNormalized modality fractions[{method}]")
-                    print("FLAIR:", round(modality_scores_norm[method]["flair"], 4))
-                    print("T2:   ", round(modality_scores_norm[method]["t2"], 4))
-                    print("T1:   ", round(modality_scores_norm[method]["t1"], 4))
+        # Normalize and save
+        to_range_0_1 = lambda x: (x + 1.) / 2.
+        fake_sample = to_range_0_1(fake_sample)
 
-                unc = unc - unc.min()
-                unc = unc / (unc.max() + 1e-8)
+        fake_sample = fake_sample * 255.0
+        fake_sample = fake_sample.squeeze(0).squeeze(0)  # Shape: (256, 256, 5)
 
-                # Normalize and save
-                to_range_0_1 = lambda x: (x + 1.) / 2.
-                fake_sample = to_range_0_1(fake_sample)
+        # Plot the concatenated image
+        plt.figure(figsize=(10, 10))
+        plt.imshow(fake_sample.cpu().numpy(), cmap='gray')  # Display in grayscale
+        plt.axis('off')  # Hide axes
+        plt.savefig(os.path.join(output_dir,"Generated Image.png"), bbox_inches="tight", pad_inches=0)
 
-                fake_sample = fake_sample * 255.0
-                fake_sample = fake_sample.squeeze(0).squeeze(0)  # Shape: (256, 256, 5)
+        plt.figure(figsize=(10, 10))
+        plt.imshow(sample_inputs.cpu().numpy(), cmap='gray')  # Display in grayscale
+        plt.axis('off')  # Hide axes
+        plt.figure(figsize=(8, 8))
+        plt.imshow(fake_sample.cpu().numpy(), cmap='gray')
+        plt.imshow(unc.squeeze(0).squeeze(0).cpu().numpy(), cmap='jet', alpha=0.35)  # overlay
+        plt.axis('off')
+        plt.colorbar(fraction=0.046, pad=0.04, label='Uncertainty')
+        plt.savefig(os.path.join(output_dir,"uncertainty_overlay.png"), bbox_inches="tight", pad_inches=0)
+        plt.axis('off')
+        overlap_score = {}
 
-                # Plot the concatenated image
-                plt.figure(figsize=(10, 10))
-                plt.imshow(fake_sample.cpu().numpy(), cmap='gray')  # Display in grayscale
-                plt.axis('off')  # Hide axes
-                plt.savefig(os.path.join(output_dir,"Generated Image.png"), bbox_inches="tight", pad_inches=0)
+        for method in modality_scores_raw:
+            curr_overlap_score = 0
+            fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+            axes[0,1].imshow(x1.squeeze(0).squeeze(0).cpu().numpy(), cmap='gray')
+            axes[0,1].imshow(saliency_maps[method]["flair"].squeeze(0).squeeze(0).cpu().numpy(), cmap='hot', alpha=0.45)
+            axes[0,1].set_title(f"FLAIR {method}")
+            curr_overlap_score += np.sum(saliency_maps[method]["flair"].squeeze(0).squeeze(0).cpu().numpy()*enhancement_mask)
 
-                plt.figure(figsize=(10, 10))
-                plt.imshow(sample_inputs.cpu().numpy(), cmap='gray')  # Display in grayscale
-                plt.axis('off')  # Hide axes
-                plt.figure(figsize=(8, 8))
-                plt.imshow(fake_sample.cpu().numpy(), cmap='gray')
-                plt.imshow(unc.squeeze(0).squeeze(0).cpu().numpy(), cmap='jet', alpha=0.35)  # overlay
-                plt.axis('off')
-                plt.colorbar(fraction=0.046, pad=0.04, label='Uncertainty')
-                plt.savefig(os.path.join(output_dir,"uncertainty_overlay.png"), bbox_inches="tight", pad_inches=0)
-                plt.axis('off')
+            axes[1,0].imshow(x2.squeeze(0).squeeze(0).cpu().numpy(), cmap='gray')
+            axes[1,1].imshow(saliency_maps[method]["t2"].squeeze(0).squeeze(0).cpu().numpy(), cmap='hot', alpha=0.45)
+            axes[1,0].set_title(f"T2 {method}")
+            curr_overlap_score += np.sum(
+                saliency_maps[method]["t2"].squeeze(0).squeeze(0).cpu().numpy() * enhancement_mask)
 
-                for method in modality_scores_raw:
-                    fig, axes = plt.subplots(1, 3, figsize=(12, 8))
-                    axes[0].imshow(x1.squeeze(0).squeeze(0).cpu().numpy(), cmap='gray')
-                    axes[0].imshow(saliency_maps[method]["flair"].squeeze(0).squeeze(0).cpu().numpy(), cmap='hot', alpha=0.45)
-                    axes[0].set_title(f"FLAIR {method}")
+            axes[1,1].imshow(x3.squeeze(0).squeeze(0).cpu().numpy(), cmap='gray')
+            axes[1,1].imshow(saliency_maps[method]["t1"].squeeze(0).squeeze(0).cpu().numpy(), cmap='hot', alpha=0.45)
+            axes[1,1].set_title(f"T1 {method}")
+            curr_overlap_score += np.sum(
+                saliency_maps[method]["t1"].squeeze(0).squeeze(0).cpu().numpy() * enhancement_mask)
 
-                    axes[1].imshow(x2.squeeze(0).squeeze(0).cpu().numpy(), cmap='gray')
-                    axes[1].imshow(saliency_maps[method]["t2"].squeeze(0).squeeze(0).cpu().numpy(), cmap='hot', alpha=0.45)
-                    axes[1].set_title(f"T2 {method}")
+            axes[0, 0].imshow(real_data.squeeze(0).squeeze(0).cpu().numpy(), cmap='gray')
+            axes[0, 0].set_title(f"Real CE-T1")
 
-                    axes[2].imshow(x3.squeeze(0).squeeze(0).cpu().numpy(), cmap='gray')
-                    axes[2].imshow(saliency_maps[method]["t1"].squeeze(0).squeeze(0).cpu().numpy(), cmap='hot', alpha=0.45)
-                    axes[2].set_title(f"T1 {method}")
+            for ax in axes.ravel():
+                ax.axis("off")
 
-                    for ax in axes.ravel():
-                        ax.axis("off")
-
-                    plt.tight_layout()
-                    plt.savefig(fos.path.join(output_dir,f"modality_captum_{method}.png"), dpi=200, bbox_inches="tight")
-                plt.show()
+            plt.tight_layout()
+            plt.savefig(fos.path.join(output_dir,f"modality_captum_{method}.png"), dpi=200, bbox_inches="tight")
+            overlap_score[method] = curr_overlap_score
+            print(f"Overlap score of {method} for {image_name[:-4]}")
+        with open(os.path.join(output_dir,"overlap_metric.json"), "w") as f:
+            json.dump(overlap_score, f, indent=2)
