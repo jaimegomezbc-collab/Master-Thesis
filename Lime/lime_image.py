@@ -134,7 +134,9 @@ class LimeImageExplainer(object):
                          model_regressor=None,
                          random_seed=None,
                          progress_bar=True,
-                         n_modes=1):
+                         n_modes=1,
+                         img_name= ""
+                         ):
         """Generates explanations for a prediction.
 
         First, we generate neighborhood data by randomly perturbing features
@@ -264,7 +266,8 @@ class LimeImageExplainer(object):
             data, labels = self.data_labels(image, fudged_image, segments,
                                             classifier_fn, num_samples,
                                             batch_size=batch_size,
-                                            progress_bar=progress_bar)
+                                            progress_bar=progress_bar,
+                                            img_name = img_name)
 
             distances = sklearn.metrics.pairwise_distances(
                 data,
@@ -295,7 +298,8 @@ class LimeImageExplainer(object):
                     num_samples,
                     batch_size=3,
                     progress_bar=True,
-                    n_modes=1):
+                    n_modes=1,
+                    img_name = ""):
         """Generates images and predictions in the neighborhood of this image.
 
         Args:
@@ -316,7 +320,7 @@ class LimeImageExplainer(object):
                 labels: prediction probabilities matrix
         """
         n_features = np.unique(segments).shape[0]
-        checkpoint_path = "lime_checkpoint.npz"
+        checkpoint_path = f"lime_checkpoint_{img_name}.npz"
         if os.path.exists(checkpoint_path):
             ckpt = np.load(checkpoint_path, allow_pickle=True)
             data = ckpt["data"]

@@ -363,47 +363,46 @@ def batch_predict(images, n_modes=1):
     return probs.detach().cpu().numpy()
 
 from Lime import lime_image
-x1_path = r'demo/sample_data/flair.jpg'
-x2_path = r'demo/sample_data/t2.jpg'
-x3_path = r'demo/sample_data/t1.jpg'
 
+x1_path = '/cs/student/project_msc/2025/aibh/jgomezbe/UCSD-PTGBM/middle_slices/flair/UCSD-PTGBM-0019_02_slice141.npy'
+x2_path = "/cs/student/project_msc/2025/aibh/jgomezbe/UCSD-PTGBM/middle_slices/t2/UCSD-PTGBM-0019_02_slice141.npy"
+x3_path = "/cs/student/project_msc/2025/aibh/jgomezbe/UCSD-PTGBM/middle_slices/t1/UCSD-PTGBM-0019_02_slice141.npy"
+img_name = os.path.basename(x1_path).split('/')[-1]
+img_name = img_name[:-4]
 
 # Load images
-flair = load_image(x1_path)
-t2 = load_image(x2_path)
-t1 = load_image(x3_path)
-img = np.stack([
-    flair.detach().cpu().numpy().squeeze(0).squeeze(0),
-    t2.detach().cpu().numpy().squeeze(0).squeeze(0),
-    t1.detach().cpu().numpy().squeeze(0).squeeze(0)
-], axis=0)
+flair = np.load(x1_path)
+t2 = np.load(x2_path)
+t1 = np.load(x3_path)
+img = np.stack([flair, t2, t1], axis=0)
 explainer = lime_image.LimeImageExplainer()
 explanation = explainer.explain_instance(img,
                                          batch_predict, # classification function
                                          top_labels=2,
                                          hide_color=0, 
-                                         num_samples=5000,
-                                         n_modes = 3)
+                                         num_samples=1000,
+                                         n_modes = 3,
+                                         img_name= img_name)
 from skimage.segmentation import mark_boundaries
 temp, mask = explanation.get_image_and_mask(explanation.top_labels[0], positive_only=True, num_features=10, hide_rest=False)
 plt.figure(figsize=(10, 10))
 plt.subplot(131)
 img_boundry1 = mark_boundaries(temp[0,:,:,]/255.0, mask[0,:,:])
-plt.imshow(ndimage.rotate(temp[0,:,:],270),cmap='gray')
-plt.imshow(ndimage.rotate(img_boundry1,270),alpha=0.5)  # Display in grayscale
+plt.imshow(temp[0,:,:],cmap='gray')
+plt.imshow(img_boundry1,alpha=0.5)  # Display in grayscale
 plt.title('FLAIR')  # Add title
 plt.axis('off')
 plt.subplot(132)
 img_boundry2 = mark_boundaries(temp[1,:,:]/255.0, mask[1,:,:])
-plt.imshow(ndimage.rotate(temp[1,:,:],270),cmap='gray')
-plt.imshow(ndimage.rotate(img_boundry2,270),alpha=0.5)
+plt.imshow(temp[1,:,:],cmap='gray')
+plt.imshow(img_boundry2,alpha=0.5)
 plt.title('T2')  # Add title
 plt.axis('off')
 plt.subplot(133)
 img_boundry3 = mark_boundaries(temp[2,:,:]/255.0, mask[2,:,:])
-plt.imshow(ndimage.rotate(temp[2,:,:],270),cmap='gray')
-plt.imshow(ndimage.rotate(img_boundry3,270), alpha=0.5)
+plt.imshow(temp[2,:,:],cmap='gray')
+plt.imshow(img_boundry3, alpha=0.5)
 plt.title('T1')  # Add title
 plt.axis('off')
-plt.savefig("LIME_explanation_5000.png")
+plt.savefig(f"LIME_explanation_{img_name}.png")
 plt.show()
