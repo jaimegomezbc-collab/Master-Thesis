@@ -44,7 +44,7 @@ def save_nifti_middle_slices_as_npy(input_folder, output_folder, dtype=np.float3
         middle_slice = tumour_slices[len(tumour_slices)//2]
         mask_2d = mask_data[middle_slice,:,:]
         mask_2d_contrast = mask_2d==3
-        np.save(os.path.join(os.path.join(output_folder,"enhanced_rgions_mask"), f"{nii_path}_slice{middle_slice}.npy"), np.rot90(mask_2d_contrast))
+        np.save(os.path.join(os.path.join(output_folder,"enhanced_regions_mask"), f"{nii_path}_slice{middle_slice}.npy"), np.rot90(mask_2d_contrast))
         t1_data = t1.get_fdata().astype(dtype)
         np.save(os.path.join(os.path.join(output_folder,"t1"), f"{nii_path}_slice{middle_slice}.npy"), np.rot90(t1_data[middle_slice]))
         t2_data = t2.get_fdata().astype(dtype)
