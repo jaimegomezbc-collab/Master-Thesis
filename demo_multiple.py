@@ -713,7 +713,8 @@ if __name__ == "__main__":
             print("T1:   ", round(modality_scores_norm[method]["t1"], 4))
 
         unc = unc - unc.min()
-        unc = unc / (unc.max() + 1e-8)
+        unc_max = unc.max()
+        unc = unc / (unc_max + 1e-8)
 
         # Normalize and save
         to_range_0_1 = lambda x: (x + 1.) / 2.
@@ -736,6 +737,7 @@ if __name__ == "__main__":
         plt.imshow(unc.squeeze(0).squeeze(0).cpu().numpy(), cmap='jet', alpha=0.35)  # overlay
         plt.axis('off')
         plt.colorbar(fraction=0.046, pad=0.04, label='Uncertainty')
+        plt.legend(f"Maximum uncertainty: {unc_max}")
         plt.savefig(os.path.join(output_dir,"uncertainty_overlay.png"), bbox_inches="tight", pad_inches=0)
         plt.axis('off')
         overlap_score = {}

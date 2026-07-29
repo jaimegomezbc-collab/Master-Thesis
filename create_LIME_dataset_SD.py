@@ -38,10 +38,15 @@ def save_nifti_middle_slices_as_npy(input_folder, output_folder, dtype=np.float3
         for slice_idx in range(num_slices):
             mask_2d = mask_data[slice_idx,:, :]
 
-            if np.max(mask_2d) >= 2:
+            if np.max(mask_2d) == 3:
                 tumour_slices.append(slice_idx)
-
-        middle_slice = tumour_slices[len(tumour_slices)//2]
+        if len(tumour_slices)==0:
+            print(f"Skipping image {nii_path}. No enhancement regions found")
+            continue
+        elif len(tumour_slices)==1:
+            middle_slice = tumour_slices[0]
+        else:
+            middle_slice = tumour_slices[len(tumour_slices)//2]
         mask_2d = mask_data[middle_slice,:,:]
         mask_2d_contrast = mask_2d==3
         np.save(os.path.join(os.path.join(output_folder,"enhanced_regions_mask"), f"{nii_path}_slice{middle_slice}.npy"), np.rot90(mask_2d_contrast))
@@ -57,7 +62,7 @@ def save_nifti_middle_slices_as_npy(input_folder, output_folder, dtype=np.float3
 
 
 if __name__ == "__main__":
-    input_folder = "/cs/student/project_msc/2025/aibh/jgomezbe/UCSD-PTGBM/test"
+    input_folder = "/cs/student/project_msc/2025/aibh/jgomezbe/UCSD-PTGBM/train"
     output_folder = "/cs/student/project_msc/2025/aibh/jgomezbe/UCSD-PTGBM/middle_slices"
 
     save_nifti_middle_slices_as_npy(input_folder, output_folder)

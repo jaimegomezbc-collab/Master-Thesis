@@ -364,9 +364,9 @@ def batch_predict(images, n_modes=1):
 
 from Lime import lime_image
 
-x1_path = '/cs/student/project_msc/2025/aibh/jgomezbe/UCSD-PTGBM/middle_slices/flair/UCSD-PTGBM-0019_02_slice141.npy'
-x2_path = "/cs/student/project_msc/2025/aibh/jgomezbe/UCSD-PTGBM/middle_slices/t2/UCSD-PTGBM-0019_02_slice141.npy"
-x3_path = "/cs/student/project_msc/2025/aibh/jgomezbe/UCSD-PTGBM/middle_slices/t1/UCSD-PTGBM-0019_02_slice141.npy"
+x1_path = '/cs/student/project_msc/2025/aibh/jgomezbe/UCSD-PTGBM/middle_slices/flair/UCSD-PTGBM-0002_01_slice131.npy'
+x2_path = "/cs/student/project_msc/2025/aibh/jgomezbe/UCSD-PTGBM/middle_slices/t2/UCSD-PTGBM-0002_01_slice131.npy"
+x3_path = "/cs/student/project_msc/2025/aibh/jgomezbe/UCSD-PTGBM/middle_slices/t1/UCSD-PTGBM-0002_01_slice131.npy"
 img_name = os.path.basename(x1_path).split('/')[-1]
 img_name = img_name[:-4]
 
@@ -388,19 +388,19 @@ temp, mask = explanation.get_image_and_mask(explanation.top_labels[0], positive_
 plt.figure(figsize=(10, 10))
 plt.subplot(131)
 img_boundry1 = mark_boundaries(temp[0,:,:,]/255.0, mask[0,:,:])
-plt.imshow(temp[0,:,:],cmap='gray')
+plt.imshow(temp[0,:,:],cmap='gray', vmax = 2800)
 plt.imshow(img_boundry1,alpha=0.5)  # Display in grayscale
 plt.title('FLAIR')  # Add title
 plt.axis('off')
 plt.subplot(132)
 img_boundry2 = mark_boundaries(temp[1,:,:]/255.0, mask[1,:,:])
-plt.imshow(temp[1,:,:],cmap='gray')
+plt.imshow(temp[1,:,:],cmap='gray', vmax = 7800)
 plt.imshow(img_boundry2,alpha=0.5)
 plt.title('T2')  # Add title
 plt.axis('off')
 plt.subplot(133)
 img_boundry3 = mark_boundaries(temp[2,:,:]/255.0, mask[2,:,:])
-plt.imshow(temp[2,:,:],cmap='gray')
+plt.imshow(temp[2,:,:],cmap='gray', vmax = 4200)
 plt.imshow(img_boundry3, alpha=0.5)
 plt.title('T1')  # Add title
 plt.axis('off')
