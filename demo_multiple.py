@@ -769,7 +769,7 @@ if __name__ == "__main__":
                 ax.axis("off")
 
             plt.tight_layout()
-            plt.savefig(fos.path.join(output_dir,f"modality_captum_{method}.png"), dpi=200, bbox_inches="tight")
+            plt.savefig(os.path.join(output_dir,f"modality_captum_{method}.png"), dpi=200, bbox_inches="tight")
             overlap_score[method] = curr_overlap_score
             print(f"Overlap score of {method} for {image_name[:-4]}")
         with open(os.path.join(output_dir,"overlap_metric.json"), "w") as f:

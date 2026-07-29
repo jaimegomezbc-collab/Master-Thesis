@@ -374,6 +374,11 @@ img_name = img_name[:-4]
 flair = np.load(x1_path)
 t2 = np.load(x2_path)
 t1 = np.load(x3_path)
+plt.figure()
+plt.imshow(t1,cmap='gray')
+plt.title('FLAIR')  # Add title
+plt.show()
+print(t1.max())
 img = np.stack([flair, t2, t1], axis=0)
 explainer = lime_image.LimeImageExplainer()
 explanation = explainer.explain_instance(img,
