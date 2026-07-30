@@ -562,6 +562,17 @@ def tensorize_image(img, size=(256, 256)):
 
     return img_tensor
 
+def to_jsonable(obj):
+    if isinstance(obj, np.generic):
+        return obj.item()
+    if isinstance(obj, dict):
+        return {k: to_jsonable(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [to_jsonable(v) for v in obj]
+    if isinstance(obj, tuple):
+        return [to_jsonable(v) for v in obj]
+    return obj
+
 
 if __name__ == "__main__":
     device = 'cuda:0'
@@ -695,7 +706,7 @@ if __name__ == "__main__":
             positive_only=False,  # abs gradients
             return_saliency_maps=True,
             normalize_saliency_maps=True,
-            attribution_method=["saliency", "IntGrad", "SmoothGrad"],  # "saliency" or "ig"
+            attribution_method=["saliency"],  # "saliency" or "ig"
             ig_steps=4,
             sg_nt_samples=8,
             sg_nt_samples_batch_size=2,
@@ -771,6 +782,6 @@ if __name__ == "__main__":
             plt.tight_layout()
             plt.savefig(os.path.join(output_dir,f"modality_captum_{method}.png"), dpi=200, bbox_inches="tight")
             overlap_score[method] = curr_overlap_score
-            print(f"Overlap score of {method} for {image_name[:-4]}")
+            print(f"Overlap score of {method} for {image_name[:-4]}: {curr_overlap_score}")
         with open(os.path.join(output_dir,"overlap_metric.json"), "w") as f:
-            json.dump(overlap_score, f, indent=2)
+            json.dump(to_jsonable(overlap_score), f, indent=2)

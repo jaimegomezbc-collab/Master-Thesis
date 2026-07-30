@@ -378,7 +378,6 @@ plt.figure()
 plt.imshow(t1,cmap='gray')
 plt.title('FLAIR')  # Add title
 plt.show()
-print(t1.max())
 img = np.stack([flair, t2, t1], axis=0)
 explainer = lime_image.LimeImageExplainer()
 explanation = explainer.explain_instance(img,
