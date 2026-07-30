@@ -627,7 +627,7 @@ if __name__ == "__main__":
         os.makedirs(output_dir, exist_ok=True)
         if os.path.exists(os.path.join(output_dir, "modality_captum_SmoothGrad.png")):
             print(f"Image {image_name[:-4]} already explained")
-            #continue
+            continue
         x1_path = os.path.join(image_folder,os.path.join("flair",image_name))
         x2_path = os.path.join(image_folder,os.path.join("t2",image_name))
         x3_path = os.path.join(image_folder,os.path.join("t1",image_name))
@@ -700,10 +700,15 @@ if __name__ == "__main__":
         fake_sample = fake_sample * 255.0
         fake_sample = fake_sample.squeeze(0).squeeze(0)  # Shape: (256, 256, 5)
 
-        # Plot the concatenated image
         plt.figure(figsize=(10, 10))
+        plt.subplot(121)
+        plt.imshow(real_data.squeeze(0).squeeze(0).cpu().numpy(), cmap='gray')  # Display in grayscale
+        plt.axis('off')  # Hide axes
+        plt.set_title(f"Real CE-T1")
+        plt.subplot(122)
         plt.imshow(fake_sample.cpu().numpy(), cmap='gray')  # Display in grayscale
         plt.axis('off')  # Hide axes
+        plt.set_title(f"Synthetized CE-T1")
         plt.savefig(os.path.join(output_dir,"Generated Image.png"), bbox_inches="tight", pad_inches=0)
 
         fig, ax = plt.subplots(figsize=(8, 8))
