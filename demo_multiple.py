@@ -8,52 +8,18 @@ from backbones.ncsnpp_generator_adagn_feat import NCSNpp_adaptive
 import numpy as np
 from PIL import Image
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 import argparse
 import torch
 import torchvision.transforms
-from matplotlib.widgets import RectangleSelector
+from matplotlib.colors import TwoSlopeNorm
+import matplotlib.cm as cm
+from skimage.segmentation import mark_boundaries
 from torch.utils.checkpoint import checkpoint
 from captum.attr import Saliency, IntegratedGradients, NoiseTunnel
 import time
 import json
 
-
-def select_roi_interactive(image_2d):
-    coords = {}
-
-    fig, ax = plt.subplots(figsize=(6, 6))
-    ax.imshow(image_2d, cmap='gray')
-    ax.set_title("Drag ROI, then close window")
-    ax.axis('off')
-
-    def onselect(eclick, erelease):
-        x1, y1 = int(eclick.xdata), int(eclick.ydata)
-        x2, y2 = int(erelease.xdata), int(erelease.ydata)
-
-        coords['x1'] = min(x1, x2)
-        coords['x2'] = max(x1, x2)
-        coords['y1'] = min(y1, y2)
-        coords['y2'] = max(y1, y2)
-
-        print("Selected ROI:", coords)
-
-    rect_selector = RectangleSelector(
-        ax,
-        onselect,
-        useblit=True,
-        button=[1],
-        minspanx=2,
-        minspany=2,
-        spancoords='pixels',
-        interactive=True
-    )
-
-    plt.show()
-
-    if not coords:
-        raise RuntimeError("No ROI selected.")
-
-    return coords
 
 
 def modality_score(sal):
@@ -307,11 +273,12 @@ def _reduce_attr(attr, positive_only=False):
 
 def _normalize_map(sm):
     sm = sm.detach()
-    thresh = torch.quantile(sm.flatten(), 0.95)
-    sm = torch.where(sm < thresh, torch.zeros_like(sm), sm)
+    #thresh = torch.quantile(sm.flatten(), 0.95)
+    #sm = torch.where(sm < thresh, torch.zeros_like(sm), sm)
     sm_min = sm.min()
     sm_max = sm.max()
-    return (sm - sm_min) / (sm_max - sm_min + 1e-8)
+    sm_out = sm / (sm_max - sm_min + 1e-8)
+    return sm_out
 
 
 
@@ -651,21 +618,16 @@ if __name__ == "__main__":
 
     print('Prep 2: Done')
 
-    image_folder = "/cs/student/project_msc/2025/aibh/jgomezbe/UCSD-PTGBM/middle_slices/code_test"
+    image_folder = "/cs/student/project_msc/2025/aibh/jgomezbe/UCSD-PTGBM/middle_slices"
     contrast_folder = os.path.join(image_folder, "cet1")
-    rois = {}
-    for image_name in os.listdir(contrast_folder):
-        cet1 = np.load(os.path.join(contrast_folder,image_name))
-        cet1_tensor = tensorize_image(cet1)
-        roi = select_roi_interactive(cet1)
-        roi_mask = torch.zeros_like(cet1_tensor)
-        roi_mask[:, :, roi['y1']:roi['y2'], roi['x1']:roi['x2']] = 1.0
-        rois[image_name[:-4]] = roi_mask
 
     for image_name in os.listdir(contrast_folder):
         curr_fold = Path(image_folder)
         output_dir = os.path.join("/cs/student/project_msc/2025/aibh/jgomezbe/Master-Thesis/Explanations",image_name[:-4])
         os.makedirs(output_dir, exist_ok=True)
+        if os.path.exists(os.path.join(output_dir, "modality_captum_SmoothGrad.png")):
+            print(f"Image {image_name[:-4]} already explained")
+            #continue
         x1_path = os.path.join(image_folder,os.path.join("flair",image_name))
         x2_path = os.path.join(image_folder,os.path.join("t2",image_name))
         x3_path = os.path.join(image_folder,os.path.join("t1",image_name))
@@ -678,7 +640,7 @@ if __name__ == "__main__":
         real_data = tensorize_image(np.load(real_data_path)).cuda()
         enhancement_mask = np.load(enhancement_mask_path)
 
-        roi_mask = rois[image_name[:-4]]
+        roi_mask = torch.tensor(enhancement_mask, dtype=torch.float32).unsqueeze(0).unsqueeze(0)  # Shape: (1, 1, 256, 256)
         sample_inputs = torch.cat((x1, x2, x3, real_data), axis=-1)  # Concatenate along the width
 
         sample_inputs = sample_inputs.squeeze(0).squeeze(0)  # Shape: (256, 256, 5)
@@ -706,7 +668,7 @@ if __name__ == "__main__":
             positive_only=False,  # abs gradients
             return_saliency_maps=True,
             normalize_saliency_maps=True,
-            attribution_method=["saliency"],  # "saliency" or "ig"
+            attribution_method=["saliency","SmoothGrad","IntGrad"],  # "saliency" or "ig"
             ig_steps=4,
             sg_nt_samples=8,
             sg_nt_samples_batch_size=2,
@@ -714,14 +676,18 @@ if __name__ == "__main__":
         )
 
         for method in modality_scores_raw:
-            print(f"\nRaw modality scores [{method}]")
+            print(f"\nRaw modality scores {method}")
             print("FLAIR:", round(modality_scores_raw[method]["flair"], 4))
             print("T2:   ", round(modality_scores_raw[method]["t2"], 4))
             print("T1:   ", round(modality_scores_raw[method]["t1"], 4))
-            print(f"\nNormalized modality fractions[{method}]")
+            print(f"\nNormalized modality fractions {method}")
             print("FLAIR:", round(modality_scores_norm[method]["flair"], 4))
             print("T2:   ", round(modality_scores_norm[method]["t2"], 4))
             print("T1:   ", round(modality_scores_norm[method]["t1"], 4))
+        with open(os.path.join(output_dir, "modality_scores_raw.json"), "w") as f:
+            json.dump(to_jsonable(modality_scores_raw), f, indent=2)
+        with open(os.path.join(output_dir, "modality_scores_norm.json"), "w") as f:
+            json.dump(to_jsonable(modality_scores_norm), f, indent=2)
 
         unc = unc - unc.min()
         unc_max = unc.max()
@@ -740,48 +706,102 @@ if __name__ == "__main__":
         plt.axis('off')  # Hide axes
         plt.savefig(os.path.join(output_dir,"Generated Image.png"), bbox_inches="tight", pad_inches=0)
 
-        plt.figure(figsize=(10, 10))
-        plt.imshow(sample_inputs.cpu().numpy(), cmap='gray')  # Display in grayscale
-        plt.axis('off')  # Hide axes
-        plt.figure(figsize=(8, 8))
-        plt.imshow(fake_sample.cpu().numpy(), cmap='gray')
-        plt.imshow(unc.squeeze(0).squeeze(0).cpu().numpy(), cmap='jet', alpha=0.35)  # overlay
-        plt.axis('off')
-        plt.colorbar(fraction=0.046, pad=0.04, label='Uncertainty')
-        plt.legend(f"Maximum uncertainty: {unc_max}")
-        plt.savefig(os.path.join(output_dir,"uncertainty_overlay.png"), bbox_inches="tight", pad_inches=0)
-        plt.axis('off')
+        fig, ax = plt.subplots(figsize=(8, 8))
+        ax.imshow(fake_sample.cpu().numpy(), cmap='gray')
+        ax.imshow(unc.squeeze(0).squeeze(0).cpu().numpy(), cmap='jet', alpha=0.35)
+        ax.axis('off')
+
+        cbar = plt.colorbar(ax.images[1], ax=ax, fraction=0.046, pad=0.04)
+        cbar.set_label('Uncertainty')
+
+        proxy = Line2D([], [], color='none', label=f'Maximum uncertainty: {unc_max:.4f}')
+        ax.legend(handles=[proxy], loc='lower left', frameon=True)
+
+        plt.savefig(os.path.join(output_dir, "uncertainty_overlay.png"),
+                    bbox_inches='tight', pad_inches=0.1)
         overlap_score = {}
 
         for method in modality_scores_raw:
             curr_overlap_score = 0
-            fig, axes = plt.subplots(2, 2, figsize=(12, 8))
-            axes[0,1].imshow(x1.squeeze(0).squeeze(0).cpu().numpy(), cmap='gray')
-            axes[0,1].imshow(saliency_maps[method]["flair"].squeeze(0).squeeze(0).cpu().numpy(), cmap='hot', alpha=0.45)
-            axes[0,1].set_title(f"FLAIR {method}")
-            curr_overlap_score += np.sum(saliency_maps[method]["flair"].squeeze(0).squeeze(0).cpu().numpy()*enhancement_mask)
+            normalization_const = 0
+            fig = plt.figure(figsize=(12, 8), constrained_layout=True)
+            gs = fig.add_gridspec(2, 3, width_ratios=[1, 1, 0.06])
 
-            axes[1,0].imshow(x2.squeeze(0).squeeze(0).cpu().numpy(), cmap='gray')
-            axes[1,1].imshow(saliency_maps[method]["t2"].squeeze(0).squeeze(0).cpu().numpy(), cmap='hot', alpha=0.45)
-            axes[1,0].set_title(f"T2 {method}")
+            ax00 = fig.add_subplot(gs[0, 0])
+            ax01 = fig.add_subplot(gs[0, 1])
+            ax10 = fig.add_subplot(gs[1, 0])
+            ax11 = fig.add_subplot(gs[1, 1])
+            cax = fig.add_subplot(gs[:, 2])
+
+            all_sal = np.concatenate([
+                saliency_maps[method]["flair"].squeeze(0).squeeze(0).cpu().numpy().ravel(),
+                saliency_maps[method]["t2"].squeeze(0).squeeze(0).cpu().numpy().ravel(),
+                saliency_maps[method]["t1"].squeeze(0).squeeze(0).cpu().numpy().ravel(),
+            ])
+
+            nonzero_abs = np.abs(all_sal[np.abs(all_sal) > 0])
+            vmax = np.percentile(nonzero_abs, 99.7) if len(nonzero_abs) > 0 else np.max(np.abs(all_sal))
+            if vmax == 0:
+                vmax = 1e-8
+
+            norm = TwoSlopeNorm(vmin=-vmax, vcenter=0.0, vmax=vmax)
+
+            thr = 0.2 * vmax
+
+            cmap = cm.get_cmap('seismic').copy()
+            cmap.set_bad((0, 0, 0, 0))
+
+            flair_sal = saliency_maps[method]["flair"].squeeze(0).squeeze(0).cpu().numpy().copy()
+            t2_sal = saliency_maps[method]["t2"].squeeze(0).squeeze(0).cpu().numpy().copy()
+            t1_sal = saliency_maps[method]["t1"].squeeze(0).squeeze(0).cpu().numpy().copy()
+
+            flair_sal[np.abs(flair_sal) < thr] = np.nan
+            t2_sal[np.abs(t2_sal) < thr] = np.nan
+            t1_sal[np.abs(t1_sal) < thr] = np.nan
+
+            outlined = mark_boundaries(real_data.squeeze(0).squeeze(0).cpu().numpy(), enhancement_mask, color=(1, 1, 0), mode='thick')
+            ax00.imshow(real_data.squeeze(0).squeeze(0).cpu().numpy(), cmap="grey")
+            ax00.imshow(outlined, alpha= 0.35)
+            ax00.set_title("Real CE-T1")
+
+            outlined = mark_boundaries(x1.squeeze(0).squeeze(0).cpu().numpy(), enhancement_mask, color=(1, 1, 0),
+                                       mode='thick')
+            ax01.imshow(x1.squeeze(0).squeeze(0).cpu().numpy(), cmap="grey")
+            ax01.imshow(outlined, alpha= 0.35)
+            im1 = ax01.imshow(flair_sal, cmap=cmap, alpha=0.45, norm=norm)
+            ax01.set_title(f"FLAIR {method}")
+
+            curr_overlap_score += np.sum(
+                saliency_maps[method]["flair"].squeeze(0).squeeze(0).cpu().numpy() * enhancement_mask)
+            normalization_const += np.sum(enhancement_mask)
+
+            outlined = mark_boundaries(x2.squeeze(0).squeeze(0).cpu().numpy(), enhancement_mask, color=(1, 1, 0),
+                                       mode='thick')
+            ax10.imshow(x2.squeeze(0).squeeze(0).cpu().numpy(), cmap="grey")
+            ax10.imshow(outlined, alpha= 0.35)
+            ax10.imshow(t2_sal, cmap=cmap, alpha=0.45, norm=norm)
+            ax10.set_title(f"T2 {method}")
             curr_overlap_score += np.sum(
                 saliency_maps[method]["t2"].squeeze(0).squeeze(0).cpu().numpy() * enhancement_mask)
+            normalization_const += np.sum(enhancement_mask)
 
-            axes[1,1].imshow(x3.squeeze(0).squeeze(0).cpu().numpy(), cmap='gray')
-            axes[1,1].imshow(saliency_maps[method]["t1"].squeeze(0).squeeze(0).cpu().numpy(), cmap='hot', alpha=0.45)
-            axes[1,1].set_title(f"T1 {method}")
+            outlined = mark_boundaries(x3.squeeze(0).squeeze(0).cpu().numpy(), enhancement_mask, color=(1, 1, 0),
+                                       mode='thick')
+            ax11.imshow(x3.squeeze(0).squeeze(0).cpu().numpy(), cmap="grey")
+            ax11.imshow(outlined, alpha= 0.35)
+            ax11.imshow(t1_sal, cmap=cmap, alpha=0.45, norm=norm)
+            ax11.set_title(f"T1 {method}")
             curr_overlap_score += np.sum(
                 saliency_maps[method]["t1"].squeeze(0).squeeze(0).cpu().numpy() * enhancement_mask)
+            normalization_const += np.sum(enhancement_mask)
 
-            axes[0, 0].imshow(real_data.squeeze(0).squeeze(0).cpu().numpy(), cmap='gray')
-            axes[0, 0].set_title(f"Real CE-T1")
-
-            for ax in axes.ravel():
+            for ax in [ax00, ax01, ax10, ax11]:
                 ax.axis("off")
 
-            plt.tight_layout()
+            fig.colorbar(im1, cax=cax)
             plt.savefig(os.path.join(output_dir,f"modality_captum_{method}.png"), dpi=200, bbox_inches="tight")
-            overlap_score[method] = curr_overlap_score
+            # I NEED TO NORMALIZE THIS SCORE (MAP VALUES FROM -1 TO 1, BUT SUM MIGHT BE HIGHER THAN 1)
+            overlap_score[method] = curr_overlap_score/normalization_const
             print(f"Overlap score of {method} for {image_name[:-4]}: {curr_overlap_score}")
         with open(os.path.join(output_dir,"overlap_metric.json"), "w") as f:
             json.dump(to_jsonable(overlap_score), f, indent=2)
