@@ -704,12 +704,12 @@ if __name__ == "__main__":
         plt.subplot(121)
         plt.imshow(real_data.squeeze(0).squeeze(0).cpu().numpy(), cmap='gray')  # Display in grayscale
         plt.axis('off')  # Hide axes
-        plt.set_title(f"Real CE-T1")
+        plt.title(f"Real CE-T1")
         plt.subplot(122)
         plt.imshow(fake_sample.cpu().numpy(), cmap='gray')  # Display in grayscale
         plt.axis('off')  # Hide axes
-        plt.set_title(f"Synthetized CE-T1")
-        plt.savefig(os.path.join(output_dir,"Generated Image.png"), bbox_inches="tight", pad_inches=0)
+        plt.title(f"Synthetized CE-T1")
+        plt.savefig(os.path.join(output_dir,"Generated Image.png"), bbox_inches="tight")
 
         fig, ax = plt.subplots(figsize=(8, 8))
         ax.imshow(fake_sample.cpu().numpy(), cmap='gray')

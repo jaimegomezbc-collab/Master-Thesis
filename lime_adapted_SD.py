@@ -374,10 +374,6 @@ img_name = img_name[:-4]
 flair = np.load(x1_path)
 t2 = np.load(x2_path)
 t1 = np.load(x3_path)
-plt.figure()
-plt.imshow(t1,cmap='gray')
-plt.title('FLAIR')  # Add title
-plt.show()
 img = np.stack([flair, t2, t1], axis=0)
 explainer = lime_image.LimeImageExplainer()
 explanation = explainer.explain_instance(img,
@@ -391,21 +387,33 @@ from skimage.segmentation import mark_boundaries
 temp, mask = explanation.get_image_and_mask(explanation.top_labels[0], positive_only=True, num_features=10, hide_rest=False)
 plt.figure(figsize=(10, 10))
 plt.subplot(131)
-img_boundry1 = mark_boundaries(temp[0,:,:,]/255.0, mask[0,:,:])
+img_boundary1 = mark_boundaries(np.zeros_like(mask[0,:,:]), mask[0,:,:])
+bg = np.all(img_boundary1 == 0, axis=-1)   # background pixels
+rgba = np.zeros((img_boundary1.shape[0], img_boundary1.shape[1], 4), dtype=float)
+rgba[..., :3] = img_boundary1
+rgba[..., 3] = (~bg).astype(float)
 plt.imshow(temp[0,:,:],cmap='gray')
-plt.imshow(img_boundry1,alpha=0.5)  # Display in grayscale
+plt.imshow(rgba)
 plt.title('FLAIR')  # Add title
 plt.axis('off')
 plt.subplot(132)
-img_boundry2 = mark_boundaries(temp[1,:,:]/255.0, mask[1,:,:])
+img_boundary2 = mark_boundaries(np.zeros_like(mask[1,:,:]), mask[1,:,:])
+bg = np.all(img_boundary2 == 0, axis=-1)   # background pixels
+rgba = np.zeros((img_boundary2.shape[0], img_boundary2.shape[1], 4), dtype=float)
+rgba[..., :3] = img_boundary2
+rgba[..., 3] = (~bg).astype(float)
 plt.imshow(temp[1,:,:],cmap='gray')
-plt.imshow(img_boundry2,alpha=0.5)
+plt.imshow(rgba)
 plt.title('T2')  # Add title
 plt.axis('off')
 plt.subplot(133)
-img_boundry3 = mark_boundaries(temp[2,:,:]/255.0, mask[2,:,:])
+img_boundary3 = mark_boundaries(np.zeros_like(mask[2,:,:]), mask[2,:,:])
+bg = np.all(img_boundary3 == 0, axis=-1)   # background pixels
+rgba = np.zeros((img_boundary3.shape[0], img_boundary3.shape[1], 4), dtype=float)
+rgba[..., :3] = img_boundary3
+rgba[..., 3] = (~bg).astype(float)
 plt.imshow(temp[2,:,:],cmap='gray')
-plt.imshow(img_boundry3, alpha=0.5)
+plt.imshow(rgba)
 plt.title('T1')  # Add title
 plt.axis('off')
 plt.savefig(f"LIME_explanation_{img_name}.png")

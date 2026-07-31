@@ -185,13 +185,9 @@ class LimeImageExplainer(object):
                 if random_seed is None:
                     random_seed = self.random_state.randint(0, high=1000)
                 if segmentation_fn is None:
-                    segmentation_fn = SegmentationAlgorithm(
-                        'slic',
-                        n_segments=100,
-                        compactness=10,
-                        sigma=1,
-                        random_seed=random_seed
-                    )
+                    segmentation_fn =  SegmentationAlgorithm('quickshift', kernel_size=4,
+                                        max_dist=200, ratio=0.2,
+                                        random_seed=random_seed)
                 segments = segmentation_fn(current_image)
                 if final_segments is None:
                     final_segments = segments.copy()[None,...]
@@ -325,7 +321,7 @@ class LimeImageExplainer(object):
                 labels: prediction probabilities matrix
         """
         n_features = np.unique(segments).shape[0]
-        checkpoint_path = f"checkpoints/lime_checkpoint_{img_name}.npz"
+        checkpoint_path = f"lime_checkpoint.npz"
         if os.path.exists(checkpoint_path):
             ckpt = np.load(checkpoint_path, allow_pickle=True)
             data = ckpt["data"]

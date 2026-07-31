@@ -362,7 +362,7 @@ def batch_predict(images, n_modes=1):
     probs = F.softmax(logits, dim=1)
     return probs.detach().cpu().numpy()
 
-from Lime import lime_image
+from Lime import lime_image_Brats as lime_image
 x1_path = r'demo/sample_data/flair.jpg'
 x2_path = r'demo/sample_data/t2.jpg'
 x3_path = r'demo/sample_data/t1.jpg'
