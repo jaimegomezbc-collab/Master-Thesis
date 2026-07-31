@@ -185,7 +185,7 @@ class LimeImageExplainer(object):
                 if random_seed is None:
                     random_seed = self.random_state.randint(0, high=1000)
                 if segmentation_fn is None:
-                    segmentation_fn =  SegmentationAlgorithm('quickshift', kernel_size=4,
+                    segmentation_fn =  SegmentationAlgorithm('quickshift', kernel_size=2,
                                         max_dist=200, ratio=0.2,
                                         random_seed=random_seed)
                 segments = segmentation_fn(current_image)
