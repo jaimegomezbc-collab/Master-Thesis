@@ -502,6 +502,9 @@ def normalize(image):
 def irm_min_max_preprocess(image, low_perc=1, high_perc=99):
     """Main pre-processing function for removing outliers and scaling."""
     non_zeros = image > 0
+    vals = image[non_zeros]
+    if vals.size == 0:
+        return normalize(image.astype(np.float32))
     low, high = np.percentile(image[non_zeros], [low_perc, high_perc])
     image = np.clip(image, low, high)
     image = normalize(image)
@@ -628,6 +631,7 @@ if __name__ == "__main__":
         if os.path.exists(os.path.join(output_dir, "modality_captum_SmoothGrad.png")):
             print(f"Image {image_name[:-4]} already explained")
             continue
+        print(f"Image {image_name}")
         x1_path = os.path.join(image_folder,os.path.join("flair",image_name))
         x2_path = os.path.join(image_folder,os.path.join("t2",image_name))
         x3_path = os.path.join(image_folder,os.path.join("t1",image_name))
