@@ -364,7 +364,7 @@ def batch_predict(images, n_modes=1):
 
 from Lime import lime_image
 if __name__ == "__main__":
-    image_folder = "/cs/student/project_msc/2025/aibh/jgomezbe/UCSD-PTGBM/middle_slices/LIME_batches/batch_1"
+    image_folder = "/cs/student/project_msc/2025/aibh/jgomezbe/UCSD-PTGBM/middle_slices/LIME_batches/batch_3"
     flair_folder = os.path.join(image_folder, "flair")
 
     for image_name in os.listdir(flair_folder):
@@ -427,4 +427,3 @@ if __name__ == "__main__":
         plt.title('T1')  # Add title
         plt.axis('off')
         plt.savefig(os.path.join(output_dir, "LIME_explanation.png"))
-        plt.show()
