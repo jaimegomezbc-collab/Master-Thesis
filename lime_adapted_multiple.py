@@ -39,7 +39,7 @@ def get_input_tensors(img):
 
 model = DenseNet121(spatial_dims=2, in_channels=1, out_channels=2)
 model.load_state_dict(torch.load("/cs/student/project_msc/2025/aibh/jgomezbe/Master-Thesis/best_metric_model_SD.pth", weights_only=True))
-model.eval
+model.eval()
 def get_pil_transform(): 
     transf = transforms.Compose([
         transforms.Resize((256, 256)),
@@ -364,7 +364,7 @@ def batch_predict(images, n_modes=1):
 
 from Lime import lime_image
 if __name__ == "__main__":
-    image_folder = "/cs/student/project_msc/2025/aibh/jgomezbe/UCSD-PTGBM/middle_slices/LIME_batches/batch_3"
+    image_folder = "/cs/student/project_msc/2025/aibh/jgomezbe/UCSD-PTGBM/middle_slices/LIME_batches/batch_2"
     flair_folder = os.path.join(image_folder, "flair")
 
     for image_name in os.listdir(flair_folder):

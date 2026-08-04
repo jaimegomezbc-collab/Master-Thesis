@@ -19,7 +19,7 @@ from torch.utils.checkpoint import checkpoint
 from captum.attr import Saliency, IntegratedGradients, NoiseTunnel
 import time
 import json
-
+from pytorch_msssim import ssim
 
 
 def modality_score(sal):
@@ -190,8 +190,10 @@ class DiffusionAttributor:
         B_ig = cond1_in.shape[0]
 
         # Broadcast x and latent_z along batch dimension
-        x_step = x.detach().expand(B_ig, -1, -1, -1)  # [B_ig, 1, H, W]
+        x_step = x.detach().expand(B_ig, -1, -1, -1)      # [B_ig, 1, H, W]
         latent_z_step = latent_z.detach().expand(B_ig, -1)  # [B_ig, nz]
+
+        t_time_step = t_time.detach().expand(B_ig)
 
         x_0_1 = checkpoint(
             lambda a, b, c, d, e, f: self.generator1(a, b, c, d, e, f),
@@ -199,7 +201,7 @@ class DiffusionAttributor:
             cond1_in,
             cond2_in,
             cond3_in,
-            t_time,
+            t_time_step,
             latent_z_step,
             use_reentrant=False,
         )
@@ -210,13 +212,43 @@ class DiffusionAttributor:
             cond1_in,
             cond2_in,
             cond3_in,
-            t_time,
+            t_time_step,
             latent_z_step,
             x_0_1[:, [0], :],
             use_reentrant=False,
         )
 
         return x_0_1, x_0_2
+
+    def _masked_ssim_score(
+            self,
+            pred,
+            ref,
+            roi_mask,
+            *,
+            data_range=1.0,
+            size_average=False,
+    ):
+        roi_mask = roi_mask.to(device=pred.device, dtype=pred.dtype)
+
+        if roi_mask.dim() == 3:
+            roi_mask = roi_mask.unsqueeze(1)
+
+        if roi_mask.shape[0] == 1 and pred.shape[0] > 1:
+            roi_mask = roi_mask.expand(pred.shape[0], -1, -1, -1)
+
+        pred_roi = pred * roi_mask
+        ref_roi = ref * roi_mask
+
+        score = ssim(
+            pred_roi,
+            ref_roi,
+            data_range=data_range,
+            size_average=size_average,
+            nonnegative_ssim=True,
+        )
+
+        return score
 
     def forward_score(
             self,
@@ -228,8 +260,10 @@ class DiffusionAttributor:
             t_time,
             latent_z,
             roi_mask=None,
+            real_data = None,     # "x0_1", "x", or tensor passed externally later if you want
+            data_range=1.0,
     ):
-        _, x_0_2 = self.forward_outputs(
+        x_0_1, x_0_2 = self.forward_outputs(
             cond1_in,
             cond2_in,
             cond3_in,
@@ -238,18 +272,43 @@ class DiffusionAttributor:
             latent_z=latent_z,
         )
 
-        target = x_0_2[:, [0], :]
+        pred = x_0_2[:, [0], :]
+
+        ref = real_data.detach().expand_as(pred)
 
         if roi_mask is None:
-            score = target.sum()
+            score = ssim(
+                pred,
+                ref,
+                data_range=data_range,
+                size_average=False,
+                nonnegative_ssim=True,
+            )
         else:
-            roi_mask = roi_mask.to(target.device)
-            score = (target * roi_mask).sum()
+            score = self._masked_ssim_score(
+                pred,
+                ref,
+                roi_mask,
+                data_range=data_range,
+                size_average=False,
+            )
 
-            # Make it 1-D of length 1 so Captum's gradient utils can index outputs[0]
+        # Reduce batch output to a scalar for Captum
+        score = score.sum()
+
+        # Make it 1-D of length 1 so Captum's gradient utils can index outputs[0]
         return score.unsqueeze(0)
 
-    def make_forward_func(self, *, x, t_time, latent_z, roi_mask=None):
+    def make_forward_func(
+            self,
+            *,
+            x,
+            t_time,
+            latent_z,
+            roi_mask=None,
+            real_data =None,
+            data_range=1.0,
+    ):
         def forward_func(cond1_in, cond2_in, cond3_in):
             return self.forward_score(
                 cond1_in,
@@ -259,6 +318,8 @@ class DiffusionAttributor:
                 t_time=t_time,
                 latent_z=latent_z,
                 roi_mask=roi_mask,
+                real_data =real_data,
+                data_range=data_range,
             )
 
         return forward_func
@@ -304,6 +365,7 @@ def sample_from_model(
         sg_nt_samples=8,
         sg_nt_samples_batch_size=2,
         sg_stdevs=0.10,
+        real_data = None
     ):
     x = x_init
     attributor = DiffusionAttributor(generator1, generator2)
@@ -315,6 +377,7 @@ def sample_from_model(
 
     with torch.no_grad():
         unc_accum = torch.zeros_like(x_init)
+        final_ssim = 0
 
     modality_scores = {
         m:{"flair": 0.0,"t2": 0.0, "t1": 0.0}
@@ -362,6 +425,8 @@ def sample_from_model(
                 t_time=t_time,
                 latent_z=latent_z,
                 roi_mask=roi_mask,
+                real_data = real_data,
+                data_range=1.0,
             )
 
             attrs = {}
@@ -418,6 +483,14 @@ def sample_from_model(
 
                 unc_map_t = torch.abs(x_0_1[:, [0], :] - x_0_2[:, [0], :])
                 unc_accum = unc_accum + unc_map_t
+                if i == 0:
+                    final_ssim += ssim(
+                        x_0_2[:, [0], :],
+                        real_data,
+                        data_range=1.0,
+                        size_average=False,
+                        nonnegative_ssim=True,
+                    ).detach().cpu().item()
 
                 x = sample_posterior_combine(
                     coefficients,
@@ -481,11 +554,11 @@ def sample_from_model(
                     for k in saliency_maps[m]:
                         saliency_maps[m][k] = _normalize_map(saliency_maps[m][k])
 
-            return x, unc, modality_scores, modality_scores_norm, saliency_maps
+            return x, unc,final_ssim, modality_scores, modality_scores_norm, saliency_maps
 
-        return x, unc, modality_scores, modality_scores_norm
+        return x, unc,final_ssim, modality_scores, modality_scores_norm
 
-    return x, unc
+    return x, unc, final_ssim
 
 
 # Normalize the image using min-max scaling
@@ -626,7 +699,7 @@ if __name__ == "__main__":
 
     for image_name in os.listdir(contrast_folder):
         curr_fold = Path(image_folder)
-        output_dir = os.path.join("/cs/student/project_msc/2025/aibh/jgomezbe/Master-Thesis/Explanations",image_name[:-4])
+        output_dir = os.path.join("/cs/student/project_msc/2025/aibh/jgomezbe/Master-Thesis/Explanations_SSIM",image_name[:-4])
         os.makedirs(output_dir, exist_ok=True)
         if os.path.exists(os.path.join(output_dir, "modality_captum_SmoothGrad.png")):
             print(f"Image {image_name[:-4]} already explained")
@@ -655,7 +728,7 @@ if __name__ == "__main__":
         # Initialize noisy input
         x1_t = torch.randn_like(real_data)
         print(f'Prep 3: Done. Current image: {image_name[:-4]}')
-        fake_sample, unc, modality_scores_raw, modality_scores_norm, saliency_maps = sample_from_model(
+        fake_sample, unc, final_ssim, modality_scores_raw, modality_scores_norm, saliency_maps = sample_from_model(
             pos_coeff,
             gen_diffusive_1,
             x1,
@@ -677,6 +750,7 @@ if __name__ == "__main__":
             sg_nt_samples=8,
             sg_nt_samples_batch_size=2,
             sg_stdevs=0.10,
+            real_data = real_data
         )
 
         for method in modality_scores_raw:
@@ -728,6 +802,13 @@ if __name__ == "__main__":
 
         plt.savefig(os.path.join(output_dir, "uncertainty_overlay.png"),
                     bbox_inches='tight', pad_inches=0.1)
+
+        ssim_and_unc = {}
+        ssim_and_unc["SSIM"] = final_ssim
+        ssim_and_unc["Maximum uncertainty"] = unc_max.detach().cpu().item()
+        with open(os.path.join(output_dir,"SSIM_and_uncertainty.json"), "w") as f:
+            json.dump(to_jsonable(ssim_and_unc), f, indent=2)
+
         overlap_score = {}
 
         for method in modality_scores_raw:
