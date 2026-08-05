@@ -367,6 +367,7 @@ from Lime import lime_image
 x1_path = '/cs/student/project_msc/2025/aibh/jgomezbe/UCSD-PTGBM/middle_slices/flair/UCSD-PTGBM-0002_01_slice131.npy'
 x2_path = "/cs/student/project_msc/2025/aibh/jgomezbe/UCSD-PTGBM/middle_slices/t2/UCSD-PTGBM-0002_01_slice131.npy"
 x3_path = "/cs/student/project_msc/2025/aibh/jgomezbe/UCSD-PTGBM/middle_slices/t1/UCSD-PTGBM-0002_01_slice131.npy"
+read_data_path = "/cs/student/project_msc/2025/aibh/jgomezbe/UCSD-PTGBM/middle_slices/cet1/UCSD-PTGBM-0002_01_slice131.npy"
 img_name = os.path.basename(x1_path).split('/')[-1]
 img_name = img_name[:-4]
 
@@ -374,6 +375,7 @@ img_name = img_name[:-4]
 flair = np.load(x1_path)
 t2 = np.load(x2_path)
 t1 = np.load(x3_path)
+real_data = np.load(read_data_path)
 img = np.stack([flair, t2, t1], axis=0)
 explainer = lime_image.LimeImageExplainer()
 explanation = explainer.explain_instance(img,
@@ -385,36 +387,52 @@ explanation = explainer.explain_instance(img,
                                          img_name= img_name)
 from skimage.segmentation import mark_boundaries
 temp, mask = explanation.get_image_and_mask(explanation.top_labels[0], positive_only=True, num_features=10, hide_rest=False)
-plt.figure(figsize=(10, 10))
-plt.subplot(131)
+fig = plt.figure(figsize=(8, 8), constrained_layout=False)
+gs = fig.add_gridspec(2, 2, wspace=0.05, hspace=0.15)
+
+ax00 = fig.add_subplot(gs[0, 0])
+ax01 = fig.add_subplot(gs[0, 1])
+ax10 = fig.add_subplot(gs[1, 0])
+ax11 = fig.add_subplot(gs[1, 1])
+
+ax00.imshow(real_data, cmap="gray", interpolation="nearest")
+ax00.set_title("Real CE-T1", fontsize=11, pad=4)
+
 img_boundary1 = mark_boundaries(np.zeros_like(mask[0,:,:]), mask[0,:,:])
 bg = np.all(img_boundary1 == 0, axis=-1)   # background pixels
 rgba = np.zeros((img_boundary1.shape[0], img_boundary1.shape[1], 4), dtype=float)
 rgba[..., :3] = img_boundary1
 rgba[..., 3] = (~bg).astype(float)
-plt.imshow(temp[0,:,:],cmap='gray')
-plt.imshow(rgba)
-plt.title('FLAIR')  # Add title
-plt.axis('off')
-plt.subplot(132)
+ax01.imshow(temp[0,:,:],cmap='gray')
+ax01.imshow(rgba)
+ax01.set_title("FLAIR", fontsize=11, pad=4)
+
 img_boundary2 = mark_boundaries(np.zeros_like(mask[1,:,:]), mask[1,:,:])
 bg = np.all(img_boundary2 == 0, axis=-1)   # background pixels
 rgba = np.zeros((img_boundary2.shape[0], img_boundary2.shape[1], 4), dtype=float)
 rgba[..., :3] = img_boundary2
 rgba[..., 3] = (~bg).astype(float)
-plt.imshow(temp[1,:,:],cmap='gray')
-plt.imshow(rgba)
-plt.title('T2')  # Add title
-plt.axis('off')
-plt.subplot(133)
+ax10.imshow(temp[1,:,:],cmap='gray')
+ax10.imshow(rgba)
+ax10.set_title("T2", fontsize=11, pad=4)
+
 img_boundary3 = mark_boundaries(np.zeros_like(mask[2,:,:]), mask[2,:,:])
 bg = np.all(img_boundary3 == 0, axis=-1)   # background pixels
 rgba = np.zeros((img_boundary3.shape[0], img_boundary3.shape[1], 4), dtype=float)
 rgba[..., :3] = img_boundary3
 rgba[..., 3] = (~bg).astype(float)
-plt.imshow(temp[2,:,:],cmap='gray')
-plt.imshow(rgba)
-plt.title('T1')  # Add title
-plt.axis('off')
-plt.savefig(f"LIME_explanation_{img_name}.png")
+ax11.imshow(temp[2,:,:],cmap='gray')
+ax11.imshow(rgba)
+ax11.set_title("T1", fontsize=11, pad=4)
+
+for ax in [ax00, ax01, ax10, ax11]:
+    ax.axis("off")
+
+fig.text(
+    0.5, 0.03,
+    "Figure X: Real CE-T1 image and LIME explanations for each input modality.\n"
+    "The hyperpixels delimited in yellow are considered the most relevant for a synthetic 'tumour' image by LIME",
+    ha="center", fontsize=10
+)
 plt.show()
+plt.savefig(f"LIME_explanation_{img_name}.png")

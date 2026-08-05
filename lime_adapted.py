@@ -366,12 +366,14 @@ from Lime import lime_image_Brats as lime_image
 x1_path = r'demo/sample_data/flair.jpg'
 x2_path = r'demo/sample_data/t2.jpg'
 x3_path = r'demo/sample_data/t1.jpg'
+real_data_path = 'demo/sample_data/t1ce.jpg'
 
 
 # Load images
 flair = load_image(x1_path)
 t2 = load_image(x2_path)
 t1 = load_image(x3_path)
+real_data = load_image(real_data_path)
 img = np.stack([
     flair.detach().cpu().numpy().squeeze(0).squeeze(0),
     t2.detach().cpu().numpy().squeeze(0).squeeze(0),
@@ -386,24 +388,40 @@ explanation = explainer.explain_instance(img,
                                          n_modes = 3)
 from skimage.segmentation import mark_boundaries
 temp, mask = explanation.get_image_and_mask(explanation.top_labels[0], positive_only=True, num_features=10, hide_rest=False)
-plt.figure(figsize=(10, 10))
-plt.subplot(131)
-img_boundry1 = mark_boundaries(temp[0,:,:,]/255.0, mask[0,:,:])
-plt.imshow(ndimage.rotate(temp[0,:,:],270),cmap='gray')
-plt.imshow(ndimage.rotate(img_boundry1,270),alpha=0.5)  # Display in grayscale
-plt.title('FLAIR')  # Add title
-plt.axis('off')
-plt.subplot(132)
-img_boundry2 = mark_boundaries(temp[1,:,:]/255.0, mask[1,:,:])
-plt.imshow(ndimage.rotate(temp[1,:,:],270),cmap='gray')
-plt.imshow(ndimage.rotate(img_boundry2,270),alpha=0.5)
-plt.title('T2')  # Add title
-plt.axis('off')
-plt.subplot(133)
-img_boundry3 = mark_boundaries(temp[2,:,:]/255.0, mask[2,:,:])
-plt.imshow(ndimage.rotate(temp[2,:,:],270),cmap='gray')
-plt.imshow(ndimage.rotate(img_boundry3,270), alpha=0.5)
-plt.title('T1')  # Add title
-plt.axis('off')
-plt.savefig("LIME_explanation_5000.png")
+fig = plt.figure(figsize=(8, 8), constrained_layout=False)
+gs = fig.add_gridspec(2, 2, wspace=0.05, hspace=0.15)
+
+ax00 = fig.add_subplot(gs[0, 0])
+ax01 = fig.add_subplot(gs[0, 1])
+ax10 = fig.add_subplot(gs[1, 0])
+ax11 = fig.add_subplot(gs[1, 1])
+
+ax00.imshow(ndimage.rotate(real_data.detach().cpu().numpy().squeeze(0).squeeze(0),270),
+            cmap="gray", interpolation="nearest")
+ax00.set_title("Real CE-T1", fontsize=11, pad=4)
+
+img_boundry1 = mark_boundaries(temp[0, :, :] / 255.0, mask[0, :, :])
+ax01.imshow(ndimage.rotate(temp[0, :, :], 270), cmap="gray", interpolation="nearest")
+ax01.imshow(ndimage.rotate(img_boundry1, 270), alpha=0.5)
+ax01.set_title("FLAIR", fontsize=11, pad=4)
+
+img_boundry2 = mark_boundaries(temp[1, :, :] / 255.0, mask[1, :, :])
+ax10.imshow(ndimage.rotate(temp[1, :, :], 270), cmap="gray", interpolation="nearest")
+ax10.imshow(ndimage.rotate(img_boundry2, 270), alpha=0.5)
+ax10.set_title("T2", fontsize=11, pad=4)
+
+img_boundry3 = mark_boundaries(temp[2, :, :] / 255.0, mask[2, :, :])
+ax11.imshow(ndimage.rotate(temp[2, :, :], 270), cmap="gray", interpolation="nearest")
+ax11.imshow(ndimage.rotate(img_boundry3, 270), alpha=0.5)
+ax11.set_title("T1", fontsize=11, pad=4)
+
+for ax in [ax00, ax01, ax10, ax11]:
+    ax.axis("off")
+
+fig.text(
+    0.5, 0.03,
+    "Figure X: Real CE-T1 image and LIME explanations for each input modality.\n"
+    "The hyperpixels delimited in yellow are considered the most relevant for a synthetic 'tumour' image by LIME",
+    ha="center", fontsize=10
+)
 plt.show()

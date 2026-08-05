@@ -694,12 +694,13 @@ if __name__ == "__main__":
 
     print('Prep 2: Done')
 
-    image_folder = "/cs/student/project_msc/2025/aibh/jgomezbe/UCSD-PTGBM/middle_slices/code_test"
+    image_folder = "/cs/student/project_msc/2025/aibh/jgomezbe/UCSD-PTGBM/middle_slices"
     contrast_folder = os.path.join(image_folder, "cet1")
+    output_dir = "/cs/student/project_msc/2025/aibh/jgomezbe/Master-Thesis/Explanations_SSIM"
+    ssim_ranking = {}
 
     for image_name in os.listdir(contrast_folder):
         curr_fold = Path(image_folder)
-        output_dir = os.path.join("/cs/student/project_msc/2025/aibh/jgomezbe/Master-Thesis/Explanations_Figures",image_name[:-4])
         os.makedirs(output_dir, exist_ok=True)
         if os.path.exists(os.path.join(output_dir, "modality_captum_SmoothGrad.png")):
             print(f"Image {image_name[:-4]} already explained")
@@ -745,27 +746,13 @@ if __name__ == "__main__":
             positive_only=False,  # abs gradients
             return_saliency_maps=True,
             normalize_saliency_maps=True,
-            attribution_method=["saliency", "SmoothGrad", "IntGrad"],  # "saliency" or "ig"
+            attribution_method=[],  # "saliency" or "ig"
             ig_steps=4,
             sg_nt_samples=8,
             sg_nt_samples_batch_size=2,
             sg_stdevs=0.10,
             real_data = real_data
         )
-
-        for method in modality_scores_raw:
-            print(f"\nRaw modality scores {method}")
-            print("FLAIR:", round(modality_scores_raw[method]["flair"], 4))
-            print("T2:   ", round(modality_scores_raw[method]["t2"], 4))
-            print("T1:   ", round(modality_scores_raw[method]["t1"], 4))
-            print(f"\nNormalized modality fractions {method}")
-            print("FLAIR:", round(modality_scores_norm[method]["flair"], 4))
-            print("T2:   ", round(modality_scores_norm[method]["t2"], 4))
-            print("T1:   ", round(modality_scores_norm[method]["t1"], 4))
-        with open(os.path.join(output_dir, "modality_scores_raw.json"), "w") as f:
-            json.dump(to_jsonable(modality_scores_raw), f, indent=2)
-        with open(os.path.join(output_dir, "modality_scores_norm.json"), "w") as f:
-            json.dump(to_jsonable(modality_scores_norm), f, indent=2)
 
         unc = unc - unc.min()
         unc_max = unc.max()
@@ -777,128 +764,11 @@ if __name__ == "__main__":
 
         fake_sample = fake_sample * 255.0
         fake_sample = fake_sample.squeeze(0).squeeze(0)  # Shape: (256, 256, 5)
+        ssim_ranking[image_name[:-4]] = final_ssim
+        ssim_ranking = dict(sorted(ssim_ranking.items(), key=lambda item: item[1]))
+        with open(os.path.join(output_dir, "SSIM_ranking.json"), "w") as f:
+            json.dump(to_jsonable(ssim_ranking), f, indent=2)
 
-        plt.figure(figsize=(10, 10))
-        plt.subplot(121)
-        plt.imshow(real_data.squeeze(0).squeeze(0).cpu().numpy(), cmap='gray')  # Display in grayscale
-        plt.axis('off')  # Hide axes
-        plt.title(f"Real CE-T1")
-        plt.subplot(122)
-        plt.imshow(fake_sample.cpu().numpy(), cmap='gray')  # Display in grayscale
-        plt.axis('off')  # Hide axes
-        plt.title(f"Synthetized CE-T1")
-        plt.savefig(os.path.join(output_dir,"Generated Image.png"), bbox_inches="tight")
-
-        fig, ax = plt.subplots(figsize=(8, 8))
-        ax.imshow(fake_sample.cpu().numpy(), cmap='gray')
-        ax.imshow(unc.squeeze(0).squeeze(0).cpu().numpy(), cmap='jet', alpha=0.35)
-        ax.axis('off')
-
-        cbar = plt.colorbar(ax.images[1], ax=ax, fraction=0.046, pad=0.04)
-        cbar.set_label('Uncertainty')
-
-        proxy = Line2D([], [], color='none', label=f'Maximum uncertainty: {unc_max:.4f}')
-        ax.legend(handles=[proxy], loc='lower left', frameon=True)
-
-        plt.savefig(os.path.join(output_dir, "uncertainty_overlay.png"),
-                    bbox_inches='tight', pad_inches=0.1)
-
-        ssim_and_unc = {}
-        ssim_and_unc["SSIM"] = final_ssim
-        ssim_and_unc["Maximum uncertainty"] = unc_max.detach().cpu().item()
-        with open(os.path.join(output_dir,"SSIM_and_uncertainty.json"), "w") as f:
-            json.dump(to_jsonable(ssim_and_unc), f, indent=2)
-
-        overlap_score = {}
-
-        for method in modality_scores_raw:
-            curr_overlap_score = 0
-            normalization_const = 0
-            fig = plt.figure(figsize=(10, 8), constrained_layout=False)
-            gs = fig.add_gridspec(
-                2, 3,
-                width_ratios=[1, 1, 0.04],
-                left=0.03, right=0.98, top=0.95, bottom=0.05,
-                wspace=0.02, hspace=0.10
-            )
-
-            ax00 = fig.add_subplot(gs[0, 0])
-            ax01 = fig.add_subplot(gs[0, 1])
-            ax10 = fig.add_subplot(gs[1, 0])
-            ax11 = fig.add_subplot(gs[1, 1])
-            cax = fig.add_subplot(gs[:, 2])
-
-            all_sal = np.concatenate([
-                saliency_maps[method]["flair"].squeeze(0).squeeze(0).cpu().numpy().ravel(),
-                saliency_maps[method]["t2"].squeeze(0).squeeze(0).cpu().numpy().ravel(),
-                saliency_maps[method]["t1"].squeeze(0).squeeze(0).cpu().numpy().ravel(),
-            ])
-
-            nonzero_abs = np.abs(all_sal[np.abs(all_sal) > 0])
-            vmax = np.percentile(nonzero_abs, 99.7) if len(nonzero_abs) > 0 else np.max(np.abs(all_sal))
-            if vmax == 0:
-                vmax = 1e-8
-
-            norm = TwoSlopeNorm(vmin=-vmax, vcenter=0.0, vmax=vmax)
-
-            thr = 0.2 * vmax
-
-            cmap = cm.get_cmap('seismic').copy()
-            cmap.set_bad((0, 0, 0, 0))
-
-            flair_sal = saliency_maps[method]["flair"].squeeze(0).squeeze(0).cpu().numpy().copy()
-            t2_sal = saliency_maps[method]["t2"].squeeze(0).squeeze(0).cpu().numpy().copy()
-            t1_sal = saliency_maps[method]["t1"].squeeze(0).squeeze(0).cpu().numpy().copy()
-
-            flair_sal[np.abs(flair_sal) < thr] = np.nan
-            t2_sal[np.abs(t2_sal) < thr] = np.nan
-            t1_sal[np.abs(t1_sal) < thr] = np.nan
-
-            outlined = mark_boundaries(real_data.squeeze(0).squeeze(0).cpu().numpy(), enhancement_mask, color=(1, 1, 0), mode='thick')
-            ax00.imshow(real_data.squeeze(0).squeeze(0).cpu().numpy(), cmap="grey")
-            ax00.imshow(outlined, alpha= 0.35)
-            ax00.set_title("Real CE-T1")
-
-            outlined = mark_boundaries(x1.squeeze(0).squeeze(0).cpu().numpy(), enhancement_mask, color=(1, 1, 0),
-                                       mode='thick')
-            ax01.imshow(x1.squeeze(0).squeeze(0).cpu().numpy(), cmap="grey")
-            ax01.imshow(outlined, alpha= 0.35)
-            ax01.set_title(f"FLAIR")
-
-            curr_overlap_score += np.sum(
-                saliency_maps[method]["flair"].squeeze(0).squeeze(0).cpu().numpy() * enhancement_mask)
-            normalization_const += np.sum(enhancement_mask)
-
-            outlined = mark_boundaries(x2.squeeze(0).squeeze(0).cpu().numpy(), enhancement_mask, color=(1, 1, 0),
-                                       mode='thick')
-            ax10.imshow(x2.squeeze(0).squeeze(0).cpu().numpy(), cmap="grey")
-            ax10.imshow(outlined, alpha= 0.35)
-            ax10.imshow(t2_sal, cmap=cmap, alpha=0.45, norm=norm)
-            ax10.set_title(f"T2")
-            curr_overlap_score += np.sum(
-                saliency_maps[method]["t2"].squeeze(0).squeeze(0).cpu().numpy() * enhancement_mask)
-            normalization_const += np.sum(enhancement_mask)
-
-            outlined = mark_boundaries(x3.squeeze(0).squeeze(0).cpu().numpy(), enhancement_mask, color=(1, 1, 0),
-                                       mode='thick')
-            ax11.imshow(x3.squeeze(0).squeeze(0).cpu().numpy(), cmap="grey")
-            ax11.imshow(outlined, alpha= 0.35)
-            ax11.imshow(t1_sal, cmap=cmap, alpha=0.45, norm=norm)
-            ax11.set_title(f"T1")
-            im1 = ax11.imshow(t1_sal, cmap=cmap, alpha=0.45, norm=norm)
-            curr_overlap_score += np.sum(
-                saliency_maps[method]["t1"].squeeze(0).squeeze(0).cpu().numpy() * enhancement_mask)
-            normalization_const += np.sum(enhancement_mask)
-
-            for ax in [ax00, ax01, ax10, ax11]:
-                ax.axis("off")
-
-            cbar = fig.colorbar(im1, cax=cax)
-            cbar.set_label("Saliency score. Values can range from -1 to 1", fontsize=12)
-            cbar.ax.tick_params(labelsize=10)
-            plt.savefig(os.path.join(output_dir,f"modality_captum_{method}.png"), dpi=200, bbox_inches="tight")
-            # I NEED TO NORMALIZE THIS SCORE (MAP VALUES FROM -1 TO 1, BUT SUM MIGHT BE HIGHER THAN 1)
-            overlap_score[method] = curr_overlap_score/normalization_const
-            print(f"Overlap score of {method} for {image_name[:-4]}: {overlap_score[method]}")
-        with open(os.path.join(output_dir,"overlap_metric.json"), "w") as f:
-            json.dump(to_jsonable(overlap_score), f, indent=2)
+    ssim_ranking = dict(sorted(ssim_ranking.items(), key=lambda item: item[1]))
+    with open(os.path.join(output_dir,"SSIM_ranking.json"), "w") as f:
+        json.dump(to_jsonable(ssim_ranking), f, indent=2)
